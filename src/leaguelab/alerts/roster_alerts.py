@@ -21,15 +21,41 @@ NON_STARTER_POSITIONS = {
 ALERT_STATUSES = {
     "O",
     "OUT",
-    "IR",
     "NA",
+    "IR",
+    "IR-R",
+    "NFI",
+    "NFI-A",
+    "NFI-R",
+    "PUP",
+    "PUP-P",
+    "PUP-R",
+    "COVID-19",
+    "CEL",
+    "DNR",
+    "EX",
+    "RET",
+    "SUSP",
 }
 
 STATUS_LABELS = {
     "O": "OUT",
     "OUT": "OUT",
-    "IR": "IR",
     "NA": "NA",
+    "IR": "IR",
+    "IR-R": "IR-R",
+    "NFI": "NFI",
+    "NFI-A": "NFI-A",
+    "NFI-R": "NFI-R",
+    "PUP": "PUP",
+    "PUP-P": "PUP-P",
+    "PUP-R": "PUP-R",
+    "COVID-19": "COVID-19",
+    "CEL": "CEL",
+    "DNR": "DNR",
+    "EX": "EX",
+    "RET": "RET",
+    "SUSP": "SUSP",
 }
 
 
@@ -135,11 +161,17 @@ def _status_issue(player):
     if full_status == "INJURED RESERVE":
         return "IR"
 
-    if short_status.startswith("PUP"):
+    # Defensive family matching protects us from Yahoo adding another
+    # reserve-list suffix without silently missing an unavailable starter.
+    for prefix in ("IR-", "PUP-", "NFI-"):
+        if short_status.startswith(prefix):
+            return short_status
+
+    if short_status == "PUP":
         return "PUP"
 
     if "PHYSICALLY UNABLE TO PERFORM" in full_status:
-        return "PUP"
+        return short_status or "PUP"
 
     if short_status in ALERT_STATUSES:
         return STATUS_LABELS.get(short_status, short_status)
@@ -281,17 +313,46 @@ def _issue_display(issue, include_kickoff=False):
     return text
 
 
+def _issue_sort_key(issue):
+    """
+    Put global issues (EMPTY/BYE) first, then player-specific issues in
+    chronological kickoff order.
+    """
+    kickoff = str(issue.get("kickoff_label", "") or "").strip()
+    if not kickoff:
+        return (0, 0, str(issue.get("detail", "") or ""))
+
+    try:
+        clock, meridiem = kickoff.rsplit(" ", 1)
+        hour_text, minute_text = clock.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        meridiem = meridiem.upper()
+
+        if meridiem == "AM":
+            hour24 = 0 if hour == 12 else hour
+        else:
+            hour24 = 12 if hour == 12 else hour + 12
+
+        return (
+            1,
+            hour24 * 60 + minute,
+            str(issue.get("detail", "") or ""),
+        )
+    except (ValueError, TypeError):
+        return (2, 0, kickoff + str(issue.get("detail", "") or ""))
+
+
 def build_alert_message(alert, kickoff_label, league_name="Fantasy League"):
     if not alert.get("has_alert"):
         return ""
 
     lines = [
-        "LeagueLab - {} Starting Roster Notification".format(league_name),
+        "LeagueLab - {} Starting Lineup Notification".format(league_name),
         "W{} {}".format(alert["fantasy_week"], alert.get("team_name") or "Fantasy Team"),
     ]
-    for issue in alert.get("issues", []):
+    for issue in sorted(alert.get("issues", []), key=_issue_sort_key):
         lines.append(_issue_display(issue, include_kickoff=True))
-    lines.append("Fix before {}".format(kickoff_label))
     return "\n".join(lines)
 
 
@@ -301,10 +362,9 @@ def build_sms_alert_message(alert, kickoff_label, league_name="Fantasy League"):
         return ""
 
     lines = [
-        "LeagueLab {} Starting Roster Notification".format(league_name),
+        "LeagueLab {} Starting Lineup Notification".format(league_name),
         "W{} {}".format(alert["fantasy_week"], alert.get("team_name") or "Fantasy Team"),
     ]
-    for issue in alert.get("issues", []):
+    for issue in sorted(alert.get("issues", []), key=_issue_sort_key):
         lines.append(_issue_display(issue, include_kickoff=True))
-    lines.append("Fix before {}".format(kickoff_label))
     return "\n".join(lines)

@@ -701,6 +701,110 @@ def capture_league(season=2025):
     print("Capture complete.")
 
 
+def refresh_week_rosters(season, week):
+    """
+    Refresh every team roster for one Yahoo fantasy week.
+
+    All Yahoo responses are fetched successfully before any existing roster
+    file is overwritten. This prevents a failed refresh from leaving the
+    league with a mixture of fresh and stale roster files.
+
+    Returns a dictionary describing the refreshed league and file count.
+    """
+    season = int(season)
+    week = int(week)
+
+    if week < 1 or week > 18:
+        raise ValueError("Fantasy week must be between 1 and 18.")
+
+    print("Connecting to Yahoo for roster refresh...")
+
+    with YahooFantasyClient() as yahoo:
+        print("Checking authentication...")
+        yahoo.get_profile()
+        print("Authenticated.")
+
+        leagues = yahoo.get_leagues(season)
+        league_keys = list(dict.fromkeys(find_league_keys(leagues)))
+
+        if not league_keys:
+            raise RuntimeError(
+                "No Yahoo NFL leagues found for {}.".format(season)
+            )
+
+        season_dir = DATA_DIR / str(season)
+        existing_leagues = []
+        if season_dir.exists():
+            existing_leagues = [
+                path.name for path in season_dir.iterdir() if path.is_dir()
+            ]
+
+        matching = [key for key in league_keys if key in existing_leagues]
+        if len(matching) == 1:
+            league_key = matching[0]
+        elif len(league_keys) == 1:
+            league_key = league_keys[0]
+        else:
+            raise RuntimeError(
+                "Multiple Yahoo NFL leagues found for {} and LeagueLab could "
+                "not determine which one to refresh: {}".format(
+                    season, ", ".join(league_keys)
+                )
+            )
+
+        print("Refreshing {} Week {} rosters...".format(league_key, week))
+
+        teams = yahoo.get_teams(league_key)
+        team_keys = list(dict.fromkeys(find_team_keys(teams)))
+        if not team_keys:
+            raise RuntimeError(
+                "No team keys found for {}.".format(league_key)
+            )
+
+        fetched = []
+        for team_key in team_keys:
+            team_id = team_key.split(".")[-1]
+            print("  team {}: roster".format(team_id))
+            payload = yahoo.get_week_roster(team_key, week)
+            if not isinstance(payload, dict) or not payload:
+                raise RuntimeError(
+                    "Yahoo returned an invalid roster payload for {}.".format(
+                        team_key
+                    )
+                )
+            fetched.append((team_id, payload))
+
+    output_dir = (
+        DATA_DIR
+        / str(season)
+        / league_key
+        / "weeks"
+        / "week_{:02d}".format(week)
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Yahoo has been closed and every team fetch succeeded. Only now replace
+    # the cached files used by the alert engine.
+    for team_id, payload in fetched:
+        save_json(
+            payload,
+            output_dir / "team_{}_roster.json".format(team_id),
+        )
+
+    print(
+        "Yahoo roster refresh complete: {} team rosters updated.".format(
+            len(fetched)
+        )
+    )
+
+    return {
+        "season": season,
+        "week": week,
+        "league_key": league_key,
+        "rosters_updated": len(fetched),
+    }
+
+
 # =============================================================
 # Main
 # =============================================================
