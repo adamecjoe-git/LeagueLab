@@ -6,6 +6,9 @@ __pycache__/
 # Environment / secrets
 .env
 
+# Browser session / authentication
+.browser-profile/
+
 # Local data
 data/
 
