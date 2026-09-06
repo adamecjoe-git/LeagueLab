@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -48,37 +49,82 @@ class YahooFantasyClient:
         if self.playwright:
             self.playwright.stop()
 
-    def get(self, path):
+    def get(self, path, retries=4, retry_delay=3):
         """
         Fetch a Yahoo Fantasy endpoint from inside the authenticated
         Yahoo browser session.
+
+        Automatically retries transient browser/network failures.
         """
 
         url = f"{BASE_URL}{path}"
+        last_error = None
 
-        result = self.page.evaluate(
-            """async (url) => {
-                const response = await fetch(url, {
-                    credentials: 'include'
-                });
+        for attempt in range(1, retries + 1):
+            try:
+                result = self.page.evaluate(
+                    """async (url) => {
+                        const response = await fetch(url, {
+                            credentials: 'include'
+                        });
 
-                return {
-                    status: response.status,
-                    body: await response.text()
-                };
-            }""",
-            url,
+                        return {
+                            status: response.status,
+                            body: await response.text()
+                        };
+                    }""",
+                    url,
+                )
+
+                status = result["status"]
+                body = result["body"]
+
+                if status == 200:
+                    return json.loads(body)
+
+                # Authentication failures probably won't fix themselves
+                # through retrying.
+                if status in (401, 403):
+                    raise RuntimeError(
+                        f"Yahoo authentication failed.\n"
+                        f"URL: {url}\n"
+                        f"Status: {status}\n"
+                        f"Response: {body}"
+                    )
+
+                raise RuntimeError(
+                    f"Yahoo request failed.\n"
+                    f"URL: {url}\n"
+                    f"Status: {status}\n"
+                    f"Response: {body}"
+                )
+
+            except Exception as exc:
+                last_error = exc
+
+                print(
+                    f"        request failed "
+                    f"(attempt {attempt}/{retries})"
+                )
+
+                if attempt < retries:
+                    print(
+                        f"        retrying in "
+                        f"{retry_delay} seconds..."
+                    )
+
+                    time.sleep(retry_delay)
+
+        raise RuntimeError(
+            f"Yahoo request failed after "
+            f"{retries} attempts.\n"
+            f"URL: {url}\n"
+            f"Last error: {last_error}"
         )
 
-        if result["status"] != 200:
-            raise RuntimeError(
-                f"Yahoo request failed.\n"
-                f"URL: {url}\n"
-                f"Status: {result['status']}\n"
-                f"Response: {result['body']}"
-            )
-
-        return json.loads(result["body"])
+    # ---------------------------------------------------------
+    # User / league
+    # ---------------------------------------------------------
 
     def get_profile(self):
         return self.get(
@@ -117,14 +163,73 @@ class YahooFantasyClient:
             f"/league/{league_key}/draftresults?format=json"
         )
 
+    def get_transactions(self, league_key):
+        """
+        Return league transaction history.
+
+        Includes roster transactions such as:
+        - adds
+        - drops
+        - add/drop transactions
+        - trades
+        - commissioner transactions
+        """
+
+        return self.get(
+            f"/league/{league_key}/transactions?format=json"
+        )
+
+    # ---------------------------------------------------------
+    # Weekly league
+    # ---------------------------------------------------------
+
+    def get_week_scoreboard(self, league_key, week):
+        return self.get(
+            f"/league/{league_key}/"
+            f"scoreboard;week={week}?format=json"
+        )
+
+    # ---------------------------------------------------------
+    # Weekly team
+    # ---------------------------------------------------------
+
+    def get_week_roster(self, team_key, week):
+        return self.get(
+            f"/team/{team_key}/"
+            f"roster;week={week}?format=json"
+        )
+
+    def get_week_stats(self, team_key, week):
+        return self.get(
+            f"/team/{team_key}/"
+            f"stats;type=week;week={week}?format=json"
+        )
+
+    def get_week_players(self, team_key, week):
+        """
+        Historical weekly roster including:
+        - player identity
+        - eligible positions
+        - selected lineup position
+        - raw NFL stats
+        - Yahoo fantasy points
+        """
+
+        return self.get(
+            f"/team/{team_key}/"
+            f"roster;week={week}/"
+            f"players/stats;type=week;week={week}"
+            f"?format=json"
+        )
+
+
+# =============================================================
+# Yahoo JSON helpers
+# =============================================================
 
 def find_league_keys(data):
     """
-    Recursively find league_key values in Yahoo's JSON.
-
-    We intentionally don't parse Yahoo's full response structure here.
-    Yahoo's nested JSON format is inconsistent, so discovery only needs
-    the league keys.
+    Recursively find all league_key values in Yahoo JSON.
     """
 
     league_keys = []
@@ -134,19 +239,62 @@ def find_league_keys(data):
             if key == "league_key":
                 league_keys.append(value)
             else:
-                league_keys.extend(find_league_keys(value))
+                league_keys.extend(
+                    find_league_keys(value)
+                )
 
     elif isinstance(data, list):
         for item in data:
-            league_keys.extend(find_league_keys(item))
+            league_keys.extend(
+                find_league_keys(item)
+            )
 
     return league_keys
 
 
-def save_json(data, path):
-    path.parent.mkdir(parents=True, exist_ok=True)
+def find_team_keys(data):
+    """
+    Recursively find all team_key values in Yahoo JSON.
+    """
 
-    with path.open("w", encoding="utf-8") as file:
+    team_keys = []
+
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key == "team_key":
+                team_keys.append(value)
+            else:
+                team_keys.extend(
+                    find_team_keys(value)
+                )
+
+    elif isinstance(data, list):
+        for item in data:
+            team_keys.extend(
+                find_team_keys(item)
+            )
+
+    return team_keys
+
+
+# =============================================================
+# File helpers
+# =============================================================
+
+def save_json(data, path):
+    """
+    Save formatted JSON.
+    """
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with path.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
         json.dump(
             data,
             file,
@@ -155,10 +303,67 @@ def save_json(data, path):
         )
 
 
-def capture_league(season=2026):
+def is_valid_json_file(path):
+    """
+    Return True only if the file exists, is non-empty,
+    and contains valid JSON.
+
+    This means interrupted/corrupt files will automatically
+    be downloaded again on the next run.
+    """
+
+    if not path.exists():
+        return False
+
+    if path.stat().st_size == 0:
+        return False
+
+    try:
+        with path.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
+            json.load(file)
+
+        return True
+
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+def save_if_missing(fetch_function, path):
+    """
+    Skip a file if a valid copy already exists.
+
+    Otherwise fetch and save it.
+    """
+
+    if is_valid_json_file(path):
+        print("        already exists - skipping")
+        return False
+
+    data = fetch_function()
+
+    save_json(
+        data,
+        path,
+    )
+
+    return True
+
+
+# =============================================================
+# League capture
+# =============================================================
+
+def capture_league(season=2025):
     print("Connecting to Yahoo...")
 
     with YahooFantasyClient() as yahoo:
+        # -----------------------------------------------------
+        # Authentication
+        # -----------------------------------------------------
+
         print("Checking authentication...")
 
         profile = yahoo.get_profile()
@@ -168,9 +373,11 @@ def capture_league(season=2026):
 
         leagues = yahoo.get_leagues(season)
 
-        league_keys = list(dict.fromkeys(
-            find_league_keys(leagues)
-        ))
+        league_keys = list(
+            dict.fromkeys(
+                find_league_keys(leagues)
+            )
+        )
 
         if not league_keys:
             raise RuntimeError(
@@ -183,6 +390,10 @@ def capture_league(season=2026):
         for league_key in league_keys:
             print(f"  {league_key}")
 
+        # -----------------------------------------------------
+        # Each league
+        # -----------------------------------------------------
+
         for league_key in league_keys:
             print()
             print(f"Capturing {league_key}...")
@@ -193,51 +404,306 @@ def capture_league(season=2026):
                 / league_key
             )
 
-            save_json(
-                profile,
-                output_dir / "profile.json",
+            output_dir.mkdir(
+                parents=True,
+                exist_ok=True,
             )
 
-            save_json(
-                leagues,
-                output_dir / "leagues.json",
+            # -------------------------------------------------
+            # Profile
+            # -------------------------------------------------
+
+            profile_path = (
+                output_dir
+                / "profile.json"
             )
+
+            if is_valid_json_file(profile_path):
+                print(
+                    "  profile "
+                    "(already exists - skipping)"
+                )
+            else:
+                print("  profile")
+
+                save_json(
+                    profile,
+                    profile_path,
+                )
+
+            # -------------------------------------------------
+            # League discovery response
+            # -------------------------------------------------
+
+            leagues_path = (
+                output_dir
+                / "leagues.json"
+            )
+
+            if is_valid_json_file(leagues_path):
+                print(
+                    "  leagues "
+                    "(already exists - skipping)"
+                )
+            else:
+                print("  leagues")
+
+                save_json(
+                    leagues,
+                    leagues_path,
+                )
+
+            # -------------------------------------------------
+            # Settings
+            # -------------------------------------------------
 
             print("  settings")
-            save_json(
-                yahoo.get_league_settings(league_key),
-                output_dir / "settings.json",
+
+            save_if_missing(
+                lambda: yahoo.get_league_settings(
+                    league_key
+                ),
+                output_dir
+                / "settings.json",
             )
 
-            print("  teams")
-            save_json(
-                yahoo.get_teams(league_key),
-                output_dir / "teams.json",
+            # -------------------------------------------------
+            # Teams
+            #
+            # We need the team data in memory so we can get
+            # team keys, even if teams.json already exists.
+            # -------------------------------------------------
+
+            teams_path = (
+                output_dir
+                / "teams.json"
             )
+
+            if is_valid_json_file(teams_path):
+                print(
+                    "  teams "
+                    "(already exists - loading)"
+                )
+
+                with teams_path.open(
+                    "r",
+                    encoding="utf-8",
+                ) as file:
+                    teams = json.load(file)
+
+            else:
+                print("  teams")
+
+                teams = yahoo.get_teams(
+                    league_key
+                )
+
+                save_json(
+                    teams,
+                    teams_path,
+                )
+
+            team_keys = list(
+                dict.fromkeys(
+                    find_team_keys(teams)
+                )
+            )
+
+            print(
+                f"  found {len(team_keys)} teams"
+            )
+
+            if not team_keys:
+                raise RuntimeError(
+                    f"No team keys found for "
+                    f"{league_key}."
+                )
+
+            # -------------------------------------------------
+            # Standings
+            # -------------------------------------------------
 
             print("  standings")
-            save_json(
-                yahoo.get_standings(league_key),
-                output_dir / "standings.json",
+
+            save_if_missing(
+                lambda: yahoo.get_standings(
+                    league_key
+                ),
+                output_dir
+                / "standings.json",
             )
+
+            # -------------------------------------------------
+            # League rosters
+            # -------------------------------------------------
 
             print("  rosters")
-            save_json(
-                yahoo.get_rosters(league_key),
-                output_dir / "rosters.json",
+
+            save_if_missing(
+                lambda: yahoo.get_rosters(
+                    league_key
+                ),
+                output_dir
+                / "rosters.json",
             )
+
+            # -------------------------------------------------
+            # Draft
+            # -------------------------------------------------
 
             print("  draft results")
-            save_json(
-                yahoo.get_draft_results(league_key),
-                output_dir / "draft_results.json",
+
+            save_if_missing(
+                lambda: yahoo.get_draft_results(
+                    league_key
+                ),
+                output_dir
+                / "draft_results.json",
             )
 
-            print(f"Saved to: {output_dir}")
+            # -------------------------------------------------
+            # Transactions
+            # -------------------------------------------------
+
+            print("  transactions")
+
+            save_if_missing(
+                lambda: yahoo.get_transactions(
+                    league_key
+                ),
+                output_dir
+                / "transactions.json",
+            )
+
+            # -------------------------------------------------
+            # Weekly data
+            # -------------------------------------------------
+
+            print()
+            print("  Capturing weekly data...")
+
+            for week in range(1, 18):
+                print()
+                print(f"    Week {week}")
+
+                week_dir = (
+                    output_dir
+                    / "weeks"
+                    / f"week_{week:02d}"
+                )
+
+                week_dir.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+
+                # ---------------------------------------------
+                # Scoreboard
+                # ---------------------------------------------
+
+                print("      scoreboard")
+
+                save_if_missing(
+                    lambda week=week:
+                    yahoo.get_week_scoreboard(
+                        league_key,
+                        week,
+                    ),
+                    week_dir
+                    / "scoreboard.json",
+                )
+
+                # ---------------------------------------------
+                # Teams
+                # ---------------------------------------------
+
+                for team_key in team_keys:
+                    team_id = (
+                        team_key
+                        .split(".")[-1]
+                    )
+
+                    # -----------------------------------------
+                    # Historical roster
+                    # -----------------------------------------
+
+                    print(
+                        f"      team {team_id}: "
+                        f"roster"
+                    )
+
+                    save_if_missing(
+                        lambda team_key=team_key,
+                        week=week:
+                        yahoo.get_week_roster(
+                            team_key,
+                            week,
+                        ),
+                        week_dir
+                        / (
+                            f"team_{team_id}"
+                            f"_roster.json"
+                        ),
+                    )
+
+                    # -----------------------------------------
+                    # Weekly team points
+                    # -----------------------------------------
+
+                    print(
+                        f"      team {team_id}: "
+                        f"stats"
+                    )
+
+                    save_if_missing(
+                        lambda team_key=team_key,
+                        week=week:
+                        yahoo.get_week_stats(
+                            team_key,
+                            week,
+                        ),
+                        week_dir
+                        / (
+                            f"team_{team_id}"
+                            f"_stats.json"
+                        ),
+                    )
+
+                    # -----------------------------------------
+                    # Player weekly stats + fantasy points
+                    # -----------------------------------------
+
+                    print(
+                        f"      team {team_id}: "
+                        f"players + points"
+                    )
+
+                    save_if_missing(
+                        lambda team_key=team_key,
+                        week=week:
+                        yahoo.get_week_players(
+                            team_key,
+                            week,
+                        ),
+                        week_dir
+                        / (
+                            f"team_{team_id}"
+                            f"_players.json"
+                        ),
+                    )
+
+            print()
+            print(
+                f"Saved to: {output_dir}"
+            )
 
     print()
     print("Capture complete.")
 
 
+# =============================================================
+# Main
+# =============================================================
+
 if __name__ == "__main__":
-    capture_league()
+    capture_league(season=2025)
