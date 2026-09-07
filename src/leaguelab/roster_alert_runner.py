@@ -290,6 +290,74 @@ def _save_state(path, state):
         json.dump(state, handle, indent=2, sort_keys=True)
 
 
+
+def _send_admin_failure(config, manager_contacts, dispatcher, mode, season, week, failure_text):
+    """
+    Send a commissioner/admin SMS when a roster-alert run fails before manager
+    notifications can be evaluated.
+
+    This is intentionally independent of each manager's roster-alert preference.
+    Preview mode never sends. Test/live may send only when explicitly enabled
+    under admin_notifications.sms.
+    """
+    if mode not in ("test", "live"):
+        print("ADMIN SMS not sent in preview mode.")
+        return None
+
+    admin_cfg = config.get("admin_notifications", {}).get("sms", {}) or {}
+    if not admin_cfg.get("enabled", False):
+        print("ADMIN SMS skipped - admin_notifications.sms is disabled.")
+        return None
+
+    if not admin_cfg.get("send_on_errors", True):
+        print("ADMIN SMS skipped - send_on_errors is disabled.")
+        return None
+
+    admin_guid = str(admin_cfg.get("manager_guid", "") or "").strip()
+    admin_contact = manager_contacts.get(admin_guid, {})
+    phone = str(admin_contact.get("phone", "") or "").strip()
+
+    if not phone:
+        print("ADMIN SMS skipped - configured admin manager has no phone number.")
+        return None
+
+    message = (
+        "LeagueLab ALERT FAILURE\n"
+        "Season {} Week {}\n"
+        "{}\n"
+        "Manager alerts aborted; cached Yahoo rosters were NOT used."
+    ).format(season, week, str(failure_text))
+
+    delivery = {
+        "send": True,
+        "channels": ["sms"],
+        "phone_to": phone,
+        "email_to": "",
+        "subject": "LeagueLab roster alert failure",
+        "message": message,
+        "sms_message": message,
+        "manager_preference": "admin",
+    }
+
+    try:
+        results = dispatcher.dispatch(delivery)
+    except Exception as exc:
+        print("ADMIN SMS FAILED -> {}".format(exc))
+        return None
+
+    if not results:
+        print("ADMIN SMS FAILED -> dispatcher returned no result.")
+        return None
+
+    result = results[0]
+    print("ADMIN SMS {} via {} ({})".format(
+        "SENT" if result.get("success") else "FAILED",
+        result.get("provider", "unknown"),
+        result.get("detail", ""),
+    ))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--season", type=int, required=True)
@@ -347,6 +415,14 @@ def main():
             "name supplied. This option is not allowed in live mode."
         ),
     )
+    parser.add_argument(
+        "--simulate-yahoo-failure",
+        action="store_true",
+        help=(
+            "Safety test only: simulate a Yahoo refresh failure before any "
+            "manager alerts are evaluated. Not allowed in live mode."
+        ),
+    )
     args = parser.parse_args()
 
     config = _load_notification_config()
@@ -354,6 +430,10 @@ def main():
     if args.only_team and mode == "live":
         raise RuntimeError(
             "--only-team is a preview/test safety filter and cannot be used in live mode."
+        )
+    if args.simulate_yahoo_failure and mode == "live":
+        raise RuntimeError(
+            "--simulate-yahoo-failure is a safety test and cannot be used in live mode."
         )
     schedule_season = args.schedule_season if args.schedule_season is not None else args.season
     schedule_week = args.schedule_week if args.schedule_week is not None else args.week
@@ -390,6 +470,12 @@ def main():
         print("No NFL kickoff window within {} minutes.".format(lookahead_minutes))
         return
 
+    # Load delivery/admin context before Yahoo refresh so authentication or
+    # refresh failures can still notify the commissioner safely.
+    managers_payload = _load_managers()
+    manager_contacts = managers_payload.get("managers", {})
+    dispatcher = NotificationDispatcher(config.get("delivery", {}))
+
     # Sending modes must evaluate fresh Yahoo roster data. Historical/simulated
     # test runs that provide --now intentionally keep using cached roster data
     # unless --refresh-yahoo is explicitly requested.
@@ -401,11 +487,22 @@ def main():
     if yahoo_refresh_required:
         print("Yahoo roster refresh: REQUIRED")
         try:
+            if args.simulate_yahoo_failure:
+                raise RuntimeError("SIMULATED Yahoo refresh failure")
             refresh_result = refresh_week_rosters(args.season, args.week)
         except Exception as exc:
             print("Yahoo roster refresh: FAILED")
             print("{}".format(exc))
             print("Roster alerts aborted - cached Yahoo rosters were not used.")
+            _send_admin_failure(
+                config=config,
+                manager_contacts=manager_contacts,
+                dispatcher=dispatcher,
+                mode=mode,
+                season=args.season,
+                week=args.week,
+                failure_text="Yahoo refresh failed: {}".format(exc),
+            )
             return
         print(
             "Yahoo roster refresh: OK ({} teams)".format(
@@ -433,9 +530,6 @@ def main():
     print("League: {}".format(league_name))
     print("")
 
-    managers_payload = _load_managers()
-    manager_contacts = managers_payload.get("managers", {})
-
     test_manager_config = config.get("test_manager", {}) or {}
     test_manager_guid = str(test_manager_config.get("guid", config.get("test_manager_guid", "")) or "").strip()
     test_contact = manager_contacts.get(test_manager_guid, {})
@@ -445,7 +539,6 @@ def main():
         test_contact=test_contact,
         test_channels=config.get("test_channels", ["email", "sms"]),
     )
-    dispatcher = NotificationDispatcher(config.get("delivery", {}))
     provider_status = dispatcher.provider_status()
     print("Delivery providers: email={}, sms={}".format(
         provider_status.get("email", "disabled"),
