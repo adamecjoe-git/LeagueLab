@@ -25,7 +25,7 @@ class YahooFantasyClient:
         self.browser = self.playwright.chromium.launch_persistent_context(
             user_data_dir=str(BROWSER_PROFILE_DIR),
             channel="chrome",
-            headless=False,
+            headless=True,
         )
 
         self.page = (

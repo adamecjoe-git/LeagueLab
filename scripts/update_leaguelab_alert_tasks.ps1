@@ -23,6 +23,7 @@ $LogDir = "$ProjectRoot\logs"
 $TaskPrefix = "LeagueLab Alert "
 $DailyTaskName = "LeagueLab Daily Scheduler"
 $ThisScript = $MyInvocation.MyCommand.Path
+$HiddenLauncher = "$ProjectRoot\scripts\leaguelab_hidden_powershell.vbs"
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 
@@ -38,6 +39,29 @@ function New-LeagueLabPrincipal {
         -UserId $env:USERNAME `
         -LogonType Interactive `
         -RunLevel Limited
+}
+
+function Ensure-HiddenPowerShellLauncher {
+    # Task Scheduler can briefly flash a console even with PowerShell's
+    # -WindowStyle Hidden.  Launch PowerShell through wscript.exe instead;
+    # wscript is a GUI process and therefore creates no console window.
+    $launcherText = @'
+Option Explicit
+Dim shell, encoded
+
+If WScript.Arguments.Count <> 1 Then
+    WScript.Quit 2
+End If
+
+encoded = WScript.Arguments(0)
+Set shell = CreateObject("WScript.Shell")
+shell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand " & encoded, 0, True
+WScript.Quit 0
+'@
+
+    $launcherDir = Split-Path -Parent $HiddenLauncher
+    New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
+    Set-Content -Path $HiddenLauncher -Value $launcherText -Encoding ASCII
 }
 
 function Install-DailySchedulerTask {
@@ -60,9 +84,11 @@ Set-Location '$ProjectRoot'
 
     $encoded = ConvertTo-EncodedPowerShell $command
 
+    Ensure-HiddenPowerShellLauncher
+
     $action = New-ScheduledTaskAction `
-        -Execute "powershell.exe" `
-        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encoded" `
+        -Execute "wscript.exe" `
+        -Argument "`"$HiddenLauncher`" $encoded" `
         -WorkingDirectory $ProjectRoot
 
     # Reconcile once per hour beginning at the configured anchor time.
@@ -262,9 +288,11 @@ Set-Location '$ProjectRoot'
 
     $encoded = ConvertTo-EncodedPowerShell $command
 
+    Ensure-HiddenPowerShellLauncher
+
     $action = New-ScheduledTaskAction `
-        -Execute "powershell.exe" `
-        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encoded" `
+        -Execute "wscript.exe" `
+        -Argument "`"$HiddenLauncher`" $encoded" `
         -WorkingDirectory $ProjectRoot
 
     $trigger = New-ScheduledTaskTrigger -Once -At $runAt
