@@ -38,6 +38,78 @@ def movement(value):
     return "+{}".format(n) if n > 0 else (str(n) if n < 0 else "-")
 
 
+def money_num(value, default=0.0):
+    """Parse numeric or formatted money values such as 10, '10', '$10', '$10.00'."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return default
+    text = text.replace("$", "").replace(",", "").strip()
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return default
+
+
+def challenge_payout_amount(row):
+    """Return challenge winnings across historical/current newsletter schemas."""
+    if not isinstance(row, dict):
+        return 0.0
+    return money_num(
+        row.get(
+            "amount",
+            row.get(
+                "amount_won",
+                row.get("payout", row.get("winnings", 0)),
+            ),
+        )
+    )
+
+
+def challenge_payout_rows(data):
+    """Return reliable final challenge payout rows.
+
+    Historical seasons can have a payout_leaderboard whose amount fields are
+    empty/zero while challenge_winners still contains the completed prizes.
+    Prefer the leaderboard only when it carries real payout dollars; otherwise
+    rebuild the team totals from challenge_winners.
+    """
+    data = data or {}
+    leaderboard = data.get("payout_leaderboard") or data.get("payouts") or []
+    if leaderboard and sum(challenge_payout_amount(row) for row in leaderboard) > 0:
+        return leaderboard
+
+    totals = {}
+    for row in data.get("challenge_winners") or []:
+        name = str(row.get("team_name") or row.get("team") or "").strip()
+        if not name:
+            continue
+        amount = money_num(
+            row.get(
+                "prize",
+                row.get(
+                    "amount",
+                    row.get(
+                        "amount_won",
+                        row.get("payout", row.get("winnings", 0)),
+                    ),
+                ),
+            )
+        )
+        totals[name] = totals.get(name, 0.0) + amount
+
+    return [
+        {"team_name": name, "amount": amount}
+        for name, amount in sorted(
+            totals.items(),
+            key=lambda item: (-item[1], item[0].lower()),
+        )
+    ]
+
+
 def section(title, content, subtitle=""):
     if not content:
         return ""
@@ -741,6 +813,9 @@ def _bracket_team(team, winner_key=None):
         winner_key
         and str(team.get("team_key") or "") == str(winner_key)
     )
+    # A winner_key means the matchup is complete.  Highlight the winner
+    # and loser with the newsletter's existing soft result palette. Pending
+    # matchups (including projections) remain neutral.
     if winner:
         classes = "bracket-team winner"
     elif winner_key:
@@ -935,8 +1010,10 @@ def league_champion(ctx):
         return ""
     return section(
         "League Champion",
-        '<div class="champion-block"><div class="champion-kicker">'
-        'League Champion</div><div class="champion-name">#{} {}</div></div>'.format(
+        '<div class="champion-block">'
+        '<div style="font-size:52px;line-height:1;margin-bottom:8px;">&#127942;</div>'
+        '<div class="champion-kicker">League Champion</div>'
+        '<div class="champion-name">#{} {}</div></div>'.format(
             champion.get("seed", "-"),
             escape(str(champion.get("team_name", "-"))),
         ),
@@ -951,8 +1028,10 @@ def toilet_bowl_winner(ctx):
         return ""
     return section(
         "Toilet Bowl Champion",
-        '<div class="champion-block"><div class="champion-kicker">'
-        'Toilet Bowl Champion</div><div class="champion-name">#{} {}</div>'
+        '<div class="champion-block">'
+        '<div style="font-size:52px;line-height:1;margin-bottom:8px;">&#128701;</div>'
+        '<div class="champion-kicker">Toilet Bowl Champion</div>'
+        '<div class="champion-name">#{} {}</div>'
         '<div class="champion-detail">${:.0f} payout</div></div>'.format(
             champion.get("seed", "-"),
             escape(str(champion.get("team_name", "-"))),
@@ -986,9 +1065,7 @@ def challenge_winners(ctx):
 
 
 def challenge_payout_leaderboard(ctx):
-    leaderboard = (
-        (ctx.get("challenge_data") or {}).get("payout_leaderboard", [])
-    )
+    leaderboard = challenge_payout_rows(ctx.get("challenge_data"))
     if not leaderboard:
         return ""
 
@@ -996,7 +1073,7 @@ def challenge_payout_leaderboard(ctx):
         [
             index,
             row.get("team_name", ""),
-            "${:.0f}".format(num(row.get("amount"))),
+            "${:.0f}".format(challenge_payout_amount(row)),
         ]
         for index, row in enumerate(leaderboard, start=1)
     ]
@@ -1010,9 +1087,7 @@ def total_payouts(ctx):
     league_rows = (
         (ctx.get("postseason_data") or {}).get("league_payouts") or []
     )
-    challenge_rows = (
-        (ctx.get("challenge_data") or {}).get("payout_leaderboard") or []
-    )
+    challenge_rows = challenge_payout_rows(ctx.get("challenge_data"))
 
     league = {}
     challenges = {}
@@ -1029,7 +1104,7 @@ def total_payouts(ctx):
         if name:
             teams.add(name)
             challenges[name] = (
-                challenges.get(name, 0.0) + num(row.get("amount"))
+                challenges.get(name, 0.0) + challenge_payout_amount(row)
             )
 
     if not teams:

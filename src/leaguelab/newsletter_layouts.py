@@ -82,7 +82,6 @@ LAYOUTS = {
     CHAMPIONSHIP: (
         "champion",
         "challenge_winners",
-        "challenge_payout_leaderboard",
         "total_payouts",
         "season_accolades",
         "playoff_results",

@@ -260,7 +260,14 @@ def build_challenge_newsletter_data(season, week):
             break
 
     if current is None:
-        return None
+        # During playoff Weeks 15-16 there is no active challenge section.
+        # Championship Week 17 still needs the completed season challenge
+        # winners and payout leaderboard so the final newsletter can merge
+        # challenge winnings with league payouts.
+        if int(week) == 17:
+            current = CHALLENGES[-1]
+        else:
+            return None
 
     standings = _score_challenge(current, team_rows, player_rows, week)
     formatted = [

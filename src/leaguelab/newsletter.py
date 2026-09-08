@@ -1,6 +1,7 @@
 """LeagueLab modular newsletter renderer. Python 3.8 compatible."""
 from html import escape
 from pathlib import Path
+
 from leaguelab.newsletter_blocks import build_matchups, num, render
 from leaguelab.newsletter_layouts import blocks_for, newsletter_type_for_week
 
@@ -11,18 +12,137 @@ CSS = """
 *{box-sizing:border-box} body{margin:0;background:#edf4f8;font-family:Arial,Helvetica,sans-serif;color:#263746}.shell{max-width:920px;margin:0 auto;background:#fbfdff}.hero{padding:30px 32px;background:#567b95;color:#fff}.hero h1{margin:0;font-size:29px}.hero p{margin:8px 0 0;color:#e7f0f5;font-size:14px}.section{padding:24px 28px;border-bottom:1px solid #d8e5ed}.section h2{margin:0 0 14px;font-size:20px;color:#34576e}.section h3{margin:16px 0 8px;font-size:14px;color:#45677d}.section-subtitle{margin:-7px 0 14px;color:#6c8291;font-size:12px}.cards{display:flex;flex-wrap:wrap;gap:10px}.card{flex:1 1 29%;min-width:190px;padding:14px 15px;background:#f0f7fb;border:1px solid #d3e3ed;border-radius:9px}.card-label,.highlight-label{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:#6a8191;font-weight:bold}.card-value{margin-top:6px;font-size:16px;font-weight:bold}.card-detail,.highlight-detail{margin-top:5px;color:#6b7f8d;font-size:12px}.matchups{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.matchup{border:1px solid #d3e3ed;border-radius:9px;overflow:hidden;background:#fff}.matchup-team{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid #e5eef3;font-size:13px}.matchup-team.winner{font-weight:bold;background:#f0f7fb}.matchup-team strong{font-size:15px}.matchup-margin{padding:7px 12px;color:#718694;font-size:10px;text-transform:uppercase}.highlights{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.highlight{padding:13px 14px;border-left:3px solid #6f98b3;background:#f0f7fb;border-radius:3px}.highlight:nth-child(3n+2){background:#f2f1fa;border-left-color:#8d8ab5}.highlight:nth-child(3n){background:#eef8f5;border-left-color:#78a798}.highlight-value{margin-top:5px;font-size:15px;font-weight:bold}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;background:#eaf3f8;padding:8px 7px;border-bottom:2px solid #bfd3df;white-space:nowrap}td{padding:8px 7px;border-bottom:1px solid #dce8ef;white-space:nowrap}.note{color:#6c8190;font-size:11px;margin-top:10px;line-height:1.4}.callout{margin-top:12px;padding:10px 12px;background:#eaf4fa;border-radius:7px;font-size:12px}.challenge-description{margin:10px 0 14px;padding:10px 12px;background:#f7fbfd;border-left:3px solid #9bb8ca;border-radius:3px;color:#526b7b;font-size:12px;line-height:1.45}.admin-list{font-size:13px;line-height:1.7}.owed{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.owed span{background:#eef5f9;border:1px solid #d1e1ea;border-radius:16px;padding:6px 10px;font-size:11px}.upcoming-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.upcoming{position:relative;padding:13px 14px;background:#f4f9fc;border:1px solid #d3e3ed;border-radius:9px;font-size:13px}.upcoming span{color:#6c8190}.versus{padding:5px 0;color:#7d909c;font-size:10px;text-transform:uppercase}.watch{float:right;margin-left:8px;padding:3px 6px;border-radius:10px;background:#dcecf5;color:#456b83;font-size:9px;font-weight:bold;text-transform:uppercase}.bracket-group{margin-top:4px}.bracket-heading{margin:8px 0 10px;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.6px;color:#45677d}.bracket-heading-secondary{margin-top:22px}.bracket{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;align-items:stretch}.bracket-round{display:flex;flex-direction:column;justify-content:space-around;gap:10px}.bracket-matchup{border:1px solid #cbdde7;border-radius:6px;overflow:hidden;background:#fff}.bracket-label{padding:6px 8px;background:#263746;color:#fff;text-align:center;font-size:10px;font-weight:bold;text-transform:uppercase}.bracket-team{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:6px;min-height:43px;padding:8px;border-bottom:1px solid #e1ebf0;font-size:11px}.bracket-team:last-child{border-bottom:0}.bracket-team.winner{background:#e8f3f8;font-weight:bold;font-size:12px}.bracket-team.loser .bracket-name{text-decoration:line-through;color:#8a9ba6}.bracket-seed{color:#7c919f;font-size:10px;font-weight:bold}.bracket-score{font-weight:bold;font-size:12px}.bracket-team-empty{display:block;color:#9aabb5;font-style:italic}.bracket-source-note{padding:12px;border:1px dashed #c8d8e2;border-radius:6px;color:#7b909e;text-align:center;font-size:11px}.bracket-consolation{grid-template-columns:.65fr 1fr 1fr}.bracket-toilet{grid-template-columns:1fr 1fr}.champion-block{padding:18px 20px;background:#e8f3f8;border:1px solid #bdd4e1;border-radius:9px;text-align:center}.champion-kicker{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#5d7889;font-weight:bold}.champion-name{margin-top:5px;font-size:22px;font-weight:bold;color:#294b60}.champion-detail{margin-top:5px;color:#647e8e;font-size:12px}.accolades{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.accolade-card{padding:16px;background:#f4f9fc;border:1px solid #d3e3ed;border-radius:9px}.accolade-icon{font-size:24px}.accolade-title{margin-top:7px;font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:#6a8191;font-weight:bold}.accolade-winner{margin-top:6px;font-size:16px;font-weight:bold;color:#34576e}.accolade-detail{margin-top:5px;color:#6b7f8d;font-size:12px}.footer{padding:20px 28px;color:#8a9ba6;font-size:10px;text-align:center}@media(max-width:650px){.bracket,.bracket-consolation,.bracket-toilet{grid-template-columns:1fr}.bracket-round{justify-content:flex-start}.hero,.section{padding-left:16px;padding-right:16px}.matchups,.highlights,.upcoming-grid,.accolades{grid-template-columns:1fr}.card{min-width:46%}table{font-size:11px}}
 """
 
-def build_newsletter_html(season, week, analytics_result, league_name="XTreme Football", challenge_data=None, admin_data=None, upcoming_data=None, postseason_data=None, newsletter_type=None, regular_season_end=14, season_end=17):
-    ntype=newsletter_type_for_week(week,regular_season_end,season_end,newsletter_type)
-    glance=analytics_result.get("week_at_a_glance") or {}
-    weekly=[r for r in analytics_result.get("weekly_analytics",[]) if int(num(r.get("week")))==int(week)]
-    weekly.sort(key=lambda r:int(num(r.get("standings_rank"),999)))
-    ctx={"season":season,"week":week,"glance":glance,"matchups":build_matchups(glance),"lineup_summary":analytics_result.get("lineup_summary") or {},"weekly_rows":weekly,"all_weekly_rows":analytics_result.get("weekly_analytics",[]),"power":sorted(analytics_result.get("power_rankings",[]),key=lambda r:int(num(r.get("power_rank"),999))),"luck":sorted(analytics_result.get("luck",[]),key=lambda r:num(r.get("luck_wins")),reverse=True),"sos":sorted(analytics_result.get("schedule_strength",[]),key=lambda r:int(num(r.get("sos_rank"),999))),"challenge_data":challenge_data,"admin_data":admin_data,"upcoming_data":upcoming_data,"postseason_data":postseason_data,"all_play_week":[r for r in analytics_result.get("all_play",[]) if int(num(r.get("week")))==int(week)]}
-    labels={"regular_season":"Regular Season","regular_season_final":"Regular Season Finale","playoffs":"Playoffs","championship":"Championship Week","postseason_wrap":"Season Wrap-Up"}
-    body="".join(render(name,ctx) for name in blocks_for(ntype))
-    return "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>LeagueLab Week {}</title><style>{}</style></head><body><div class='shell'><div class='hero'><h1>{}</h1><p>LeagueLab • {} • Week {} • {}</p></div>{}<div class='footer'>Generated by LeagueLab</div></div></body></html>".format(week,CSS,escape(league_name),season,week,labels[ntype],body)
 
-def write_newsletter(season,week,analytics_result,league_name="XTreme Football",challenge_data=None,admin_data=None,upcoming_data=None,postseason_data=None,newsletter_type=None,regular_season_end=14,season_end=17):
-    out=OUTPUT_ROOT/str(season)/"newsletter"; out.mkdir(parents=True,exist_ok=True); path=out/"week_{:02d}.html".format(int(week))
-    html=build_newsletter_html(season,week,analytics_result,league_name,challenge_data,admin_data,upcoming_data,postseason_data,newsletter_type,regular_season_end,season_end)
-    with path.open("w",encoding="utf-8") as h: h.write(html)
-    return path
+def build_newsletter_html(
+    season,
+    week,
+    analytics_result,
+    league_name="XTreme Football",
+    challenge_data=None,
+    admin_data=None,
+    upcoming_data=None,
+    postseason_data=None,
+    newsletter_type=None,
+    regular_season_end=14,
+    season_end=17,
+):
+    ntype = newsletter_type_for_week(
+        week, regular_season_end, season_end, newsletter_type
+    )
+    glance = analytics_result.get("week_at_a_glance") or {}
+    weekly = [
+        r for r in analytics_result.get("weekly_analytics", [])
+        if int(num(r.get("week"))) == int(week)
+    ]
+    weekly.sort(key=lambda r: int(num(r.get("standings_rank"), 999)))
+    ctx = {
+        "season": season,
+        "week": week,
+        "glance": glance,
+        "matchups": build_matchups(glance),
+        "lineup_summary": analytics_result.get("lineup_summary") or {},
+        "weekly_rows": weekly,
+        "all_weekly_rows": analytics_result.get("weekly_analytics", []),
+        "power": sorted(
+            analytics_result.get("power_rankings", []),
+            key=lambda r: int(num(r.get("power_rank"), 999)),
+        ),
+        "luck": sorted(
+            analytics_result.get("luck", []),
+            key=lambda r: num(r.get("luck_wins")),
+            reverse=True,
+        ),
+        "sos": sorted(
+            analytics_result.get("schedule_strength", []),
+            key=lambda r: int(num(r.get("sos_rank"), 999)),
+        ),
+        "challenge_data": challenge_data,
+        "admin_data": admin_data,
+        "upcoming_data": upcoming_data,
+        "postseason_data": postseason_data,
+        "all_play_week": [
+            r for r in analytics_result.get("all_play", [])
+            if int(num(r.get("week"))) == int(week)
+        ],
+    }
+    labels = {
+        "regular_season": "Regular Season",
+        "regular_season_final": "Regular Season Finale",
+        "playoffs": "Playoffs",
+        "championship": "Championship Week",
+        "postseason_wrap": "Season Wrap-Up",
+    }
+    body = "".join(render(name, ctx) for name in blocks_for(ntype))
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>LeagueLab Week {}</title><style>{}</style></head><body>"
+        "<div class='shell'><div class='hero'><h1>{}</h1>"
+        "<p>LeagueLab &bull; {} &bull; Week {} &bull; {}</p></div>{}"
+        "<div class='footer'>Generated by LeagueLab</div></div></body></html>"
+    ).format(week, CSS, escape(league_name), season, week, labels[ntype], body)
+
+
+def write_newsletter(
+    season,
+    week,
+    analytics_result,
+    league_name="XTreme Football",
+    challenge_data=None,
+    admin_data=None,
+    upcoming_data=None,
+    postseason_data=None,
+    newsletter_type=None,
+    regular_season_end=14,
+    season_end=17,
+):
+    """Write both browser HTML and Outlook-friendly email HTML.
+
+    Returns the browser HTML path for backward compatibility with callers that
+    already expect write_newsletter() to return one Path.
+    """
+    out = OUTPUT_ROOT / str(season) / "newsletter"
+    out.mkdir(parents=True, exist_ok=True)
+
+    web_path = out / "week_{:02d}.html".format(int(week))
+    web_html = build_newsletter_html(
+        season,
+        week,
+        analytics_result,
+        league_name,
+        challenge_data,
+        admin_data,
+        upcoming_data,
+        postseason_data,
+        newsletter_type,
+        regular_season_end,
+        season_end,
+    )
+    with web_path.open("w", encoding="utf-8") as handle:
+        handle.write(web_html)
+
+    # Import here to keep the browser renderer independent and avoid circular
+    # module imports.  The email renderer uses the same inputs but Outlook-safe
+    # presentation tables + inline styles.
+    from leaguelab.weekly_email import build_weekly_email_html
+
+    email_path = out / "week_{:02d}_email.html".format(int(week))
+    email_html = build_weekly_email_html(
+        season,
+        week,
+        analytics_result,
+        league_name,
+        challenge_data,
+        admin_data,
+        upcoming_data,
+        postseason_data,
+        newsletter_type,
+        regular_season_end,
+        season_end,
+    )
+    # utf-8-sig matches the proven preseason email output and avoids mojibake
+    # when the file passes through Windows/Outlook tooling.
+    with email_path.open("w", encoding="utf-8-sig") as handle:
+        handle.write(email_html)
+
+    return web_path
