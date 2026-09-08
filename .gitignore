@@ -14,3 +14,16 @@ data/
 
 # VS Code
 .vscode/
+
+# LeagueLab runtime/dev artifacts
+logs/
+*.log
+.browser-profile/
+
+# Local development samples
+player_sample.txt
+teams_sample.txt
+yahoo_client.txt
+task_scheduler_test.ps1
+README_BUILD.txt
+README_v6_6_2.txt

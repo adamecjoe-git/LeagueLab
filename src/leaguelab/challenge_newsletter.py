@@ -18,13 +18,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 NORMALIZED_ROOT = PROJECT_ROOT / "data" / "normalized"
 
 CHALLENGES = (
-    {"name": "Hot Start", "type": "hot_start", "start": 1, "end": 2, "prize": 10},
-    {"name": "Dynamic Duo", "type": "dynamic_duo", "start": 3, "end": 4, "prize": 10},
-    {"name": "Flex Appeal", "type": "flex_appeal", "start": 5, "end": 6, "prize": 10},
-    {"name": "Depth Charge", "type": "depth_charge", "start": 7, "end": 8, "prize": 10},
-    {"name": "Perfect Lineup", "type": "perfect_lineup", "start": 9, "end": 10, "prize": 10},
-    {"name": "No Weak Links", "type": "no_weak_links", "start": 11, "end": 12, "prize": 10},
-    {"name": "Finish Strong", "type": "finish_strong", "start": 13, "end": 14, "prize": 10},
+    {"name": "Hot Start", "type": "hot_start", "start": 1, "end": 2, "prize": 10,
+     "description": "Most total starting-lineup points across the two challenge weeks."},
+    {"name": "Dynamic Duo", "type": "dynamic_duo", "start": 3, "end": 4, "prize": 10,
+     "description": "Most combined points from each team's two highest-scoring starters each week."},
+    {"name": "Flex Appeal", "type": "flex_appeal", "start": 5, "end": 6, "prize": 10,
+     "description": "Most points scored from the W/R/T flex positions across the two weeks."},
+    {"name": "Depth Charge", "type": "depth_charge", "start": 7, "end": 8, "prize": 10,
+     "description": "Most combined points from RB2, WR2, FLEX1 and FLEX2 across the two weeks."},
+    {"name": "Perfect Lineup", "type": "perfect_lineup", "start": 9, "end": 10, "prize": 10,
+     "description": "Highest lineup efficiency: actual starter points divided by the optimal legal lineup."},
+    {"name": "No Weak Links", "type": "no_weak_links", "start": 11, "end": 12, "prize": 10,
+     "description": "Highest combined score from each team's lowest-scoring starter each week."},
+    {"name": "Finish Strong", "type": "finish_strong", "start": 13, "end": 14, "prize": 10,
+     "description": "Largest improvement over the team's expected two-week score based on its Weeks 1-12 average."},
 )
 
 SEASON_SCORING = {
@@ -33,6 +40,7 @@ SEASON_SCORING = {
     "start": 1,
     "end": 14,
     "prize": 20,
+    "description": "Most total fantasy points scored during the 14-week regular season.",
 }
 
 
@@ -228,6 +236,20 @@ def _format_value(challenge_type, value):
     return "{:.2f}".format(_to_float(value))
 
 
+def _challenge_summary(definition):
+    if not definition:
+        return None
+    return {
+        "name": definition["name"],
+        "type": definition["type"],
+        "start": definition["start"],
+        "end": definition["end"],
+        "weeks": "Weeks {}-{}".format(definition["start"], definition["end"]),
+        "prize": definition["prize"],
+        "description": definition.get("description", ""),
+    }
+
+
 def build_challenge_newsletter_data(season, week):
     team_rows, player_rows = _load_rows(season)
 
@@ -241,26 +263,32 @@ def build_challenge_newsletter_data(season, week):
         return None
 
     standings = _score_challenge(current, team_rows, player_rows, week)
-    formatted = []
-    for row in standings[:5]:
-        formatted.append({
+    formatted = [
+        {
             "rank": row["rank"],
             "team_name": row["team_name"],
             "value": _format_value(current["type"], row["value"]),
-        })
+        }
+        for row in standings
+    ]
 
     complete = week >= current["end"]
     winner = standings[0] if complete and standings else None
 
     payouts = defaultdict(float)
+    winners = []
     for definition in CHALLENGES:
         if week < definition["end"]:
             continue
-        result = _score_challenge(
-            definition, team_rows, player_rows, definition["end"]
-        )
+        result = _score_challenge(definition, team_rows, player_rows, definition["end"])
         if result:
             payouts[result[0]["team_name"]] += definition["prize"]
+            winners.append({
+                "name": definition["name"],
+                "weeks": "Weeks {}-{}".format(definition["start"], definition["end"]),
+                "team_name": result[0]["team_name"],
+                "prize": definition["prize"],
+            })
 
     season_result = _score_challenge(
         SEASON_SCORING, team_rows, player_rows, min(week, SEASON_SCORING["end"])
@@ -268,42 +296,52 @@ def build_challenge_newsletter_data(season, week):
     season_complete = week >= SEASON_SCORING["end"]
     if season_complete and season_result:
         payouts[season_result[0]["team_name"]] += SEASON_SCORING["prize"]
+        winners.append({
+            "name": SEASON_SCORING["name"],
+            "weeks": "Weeks 1-14",
+            "team_name": season_result[0]["team_name"],
+            "prize": SEASON_SCORING["prize"],
+        })
 
     payout_rows = [
         {"team_name": team, "amount": amount}
         for team, amount in sorted(
-            payouts.items(),
-            key=lambda item: (-item[1], item[0].lower()),
+            payouts.items(), key=lambda item: (-item[1], item[0].lower())
         )
     ]
 
-    next_challenge = ""
+    next_definition = None
     for definition in CHALLENGES:
         if definition["start"] > current["end"]:
-            next_challenge = "Weeks {}-{}: {}".format(
-                definition["start"], definition["end"], definition["name"]
-            )
+            next_definition = definition
             break
-    if not next_challenge and not season_complete:
-        next_challenge = "Season Points: $20 season-long challenge"
+
+    next_challenge = _challenge_summary(next_definition)
 
     return {
         "name": current["name"],
+        "type": current["type"],
         "weeks": "Weeks {}-{}".format(current["start"], current["end"]),
+        "prize": current["prize"],
+        "description": current.get("description", ""),
+        "complete": complete,
         "status": (
             "Winner: {} — ${}".format(winner["team_name"], current["prize"])
-            if winner else "Current Standings"
+            if winner else "In Progress"
         ),
+        "leader": formatted[0] if formatted else None,
         "standings": formatted,
         "next_challenge": next_challenge,
         "payout_leaderboard": payout_rows,
+        "challenge_winners": winners,
         "season_points": [
             {
                 "rank": row["rank"],
                 "team_name": row["team_name"],
                 "value": "{:.2f}".format(_to_float(row["value"])),
             }
-            for row in season_result[:3]
+            for row in season_result
         ],
         "season_points_complete": season_complete,
+        "season_points_description": SEASON_SCORING["description"],
     }

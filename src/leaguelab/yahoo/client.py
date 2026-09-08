@@ -810,4 +810,4 @@ def refresh_week_rosters(season, week):
 # =============================================================
 
 if __name__ == "__main__":
-    capture_league(season=2025)
+    capture_league(season=2026)

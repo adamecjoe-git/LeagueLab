@@ -14,7 +14,7 @@ from leaguelab.notifications.router import NotificationRouter
 from leaguelab.schedule.espn_source import EspnScheduleSource
 from leaguelab.schedule.hybrid_source import HybridScheduleSource
 from leaguelab.schedule.json_source import JsonScheduleSource
-from leaguelab.yahoo.client import refresh_week_rosters
+from leaguelab.yahoo.refresh import refresh_week_rosters
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

@@ -130,6 +130,10 @@ def build_all_play_rows(team_rows, end_week=14):
                     "team_id": row["team_id"],
                     "team_name": row["team_name"],
                     "points": round(score, 2),
+                    "projected_points": round(
+                        to_float(row.get("projected_points")),
+                        2,
+                    ),
                     "weekly_rank": rank_by_score[score],
                     "actual_result": str(
                         row.get("result") or ""
@@ -234,6 +238,7 @@ def build_weekly_team_analytics(all_play_rows):
                     "team_id": row["team_id"],
                     "team_name": row["team_name"],
                     "weekly_score": row["points"],
+                    "projected_points": row.get("projected_points", 0.0),
                     "weekly_rank": row["weekly_rank"],
                     "actual_result": result,
                     "actual_wins": actual_wins,
@@ -1993,6 +1998,7 @@ def run_weekly_analytics(season, end_week=14):
             "team_id",
             "team_name",
             "points",
+            "projected_points",
             "weekly_rank",
             "actual_result",
             "all_play_wins",
@@ -2012,6 +2018,7 @@ def run_weekly_analytics(season, end_week=14):
             "team_id",
             "team_name",
             "weekly_score",
+            "projected_points",
             "weekly_rank",
             "actual_result",
             "actual_wins",
