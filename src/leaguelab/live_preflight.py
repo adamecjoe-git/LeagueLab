@@ -283,14 +283,14 @@ def _audit_managers(report, season, managers_payload):
 
         pref_counts[pref] += 1
 
-        email = str(row.get("email", "") or "").strip()
+        notification_email = str(row.get("notification_email", "") or "").strip()
         phone = str(row.get("phone", "") or "").strip()
 
         if pref in ("email", "both"):
-            if not email:
-                manager_errors.append("{}: {} requires an email address.".format(label, pref))
-            elif not EMAIL_RE.match(email):
-                manager_errors.append("{}: email address format looks invalid.".format(label))
+            if not notification_email:
+                manager_errors.append("{}: {} requires a notification_email address.".format(label, pref))
+            elif not EMAIL_RE.match(notification_email):
+                manager_errors.append("{}: notification_email address format looks invalid.".format(label))
 
         if pref in ("sms", "both"):
             if not phone:
@@ -408,21 +408,32 @@ def _audit_roster_alert_config(report, config):
         report.ok("Roster alerts", "Enabled.")
 
     try:
-        checkpoints = sorted(set(int(x) for x in cfg.get(
-            "alert_minutes_before_kickoff", []
-        )))
+        checkpoints = sorted(
+            set(int(x) for x in cfg.get("alert_minutes_before_kickoff", [])),
+            reverse=True,
+        )
     except Exception:
         checkpoints = []
 
-    if checkpoints != [5, 30]:
+    if not checkpoints:
         report.fail(
             "Alert checkpoints",
-            "Expected [30, 5]; found {}.".format(
+            "No valid alert_minutes_before_kickoff values are configured.",
+        )
+    elif any(x <= 0 for x in checkpoints):
+        report.fail(
+            "Alert checkpoints",
+            "All alert checkpoints must be positive minutes; found {}.".format(
                 cfg.get("alert_minutes_before_kickoff")
             ),
         )
     else:
-        report.ok("Alert checkpoints", "30 and 5 minutes before kickoff.")
+        report.ok(
+            "Alert checkpoints",
+            "{} minute(s) before kickoff.".format(
+                ", ".join(str(x) for x in checkpoints)
+            ),
+        )
 
     if bool(cfg.get("repeat_alerts", False)):
         report.warn(

@@ -35,7 +35,7 @@ class NotificationRouter(object):
         if self.mode == "test":
             # Critical safety rule: test mode NEVER routes to the triggering manager.
             # It always routes only to the configured test contact.
-            test_email = str(self.test_contact.get("email", "") or "").strip()
+            test_email = str(self.test_contact.get("notification_email", "") or "").strip()
             test_phone = str(self.test_contact.get("phone", "") or "").strip()
             if test_email and "email" in self.test_channels:
                 base["channels"].append("email")
@@ -50,7 +50,7 @@ class NotificationRouter(object):
             return base
 
         if preference in ("email", "both"):
-            email_to = str(manager_contact.get("email", "") or "").strip()
+            email_to = str(manager_contact.get("notification_email", "") or "").strip()
             if email_to:
                 base["channels"].append("email")
                 base["email_to"] = email_to

@@ -50,9 +50,9 @@ def main():
     print("SMS provider: {}".format(status.get("sms")))
 
     if args.channel == "email":
-        recipient = str(contact.get("email", "") or "").strip()
+        recipient = str(contact.get("notification_email", "") or "").strip()
         if not recipient:
-            raise RuntimeError("The test manager has no email address in managers.json.")
+            raise RuntimeError("The test manager has no notification_email address in managers.json.")
         delivery = {
             "channels": ["email"],
             "email_to": recipient,

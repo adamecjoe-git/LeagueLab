@@ -160,6 +160,8 @@ def has_meaningful_private_data(record):
         return False
     if str(record.get("email") or "").strip():
         return True
+    if str(record.get("notification_email") or "").strip():
+        return True
     if str(record.get("phone") or "").strip():
         return True
 
@@ -199,6 +201,7 @@ def main():
             "team_key": identity.get("team_key", ""),
             "active_season": args.season,
             "email": old.get("email", ""),
+            "notification_email": old.get("notification_email", ""),
             "phone": old.get("phone", ""),
             "notifications": old.get("notifications", dict(DEFAULT_NOTIFICATIONS)),
         }
@@ -222,6 +225,7 @@ def main():
             "team_key": team_key,
             "active_season": None,
             "email": old.get("email", ""),
+            "notification_email": old.get("notification_email", ""),
             "phone": old.get("phone", ""),
             "notifications": old.get("notifications", dict(DEFAULT_NOTIFICATIONS)),
         }

@@ -677,7 +677,7 @@ def main():
         if send_summary:
             admin_guid = str(admin_cfg.get("manager_guid", "") or "").strip()
             admin_contact = manager_contacts.get(admin_guid, {})
-            admin_email = str(admin_contact.get("email", "") or "").strip()
+            admin_email = str(admin_contact.get("notification_email", "") or "").strip()
             if admin_email:
                 lines = [
                     "LeagueLab roster-alert run summary",
@@ -704,7 +704,7 @@ def main():
                     admin_email, result.get("detail", ""),
                 ))
             else:
-                print("ADMIN EMAIL skipped - configured admin manager has no email address.")
+                print("ADMIN EMAIL skipped - configured admin manager has no notification_email address.")
 
     print("")
     if mode == "preview":
