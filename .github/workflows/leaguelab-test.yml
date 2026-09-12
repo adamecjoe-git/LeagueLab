@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  yahoo-auth-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,8 +25,34 @@ jobs:
         run: |
           python -m playwright install --with-deps chromium
 
+      - name: Decrypt Yahoo storage state
+        env:
+          YAHOO_STORAGE_PASSPHRASE: ${{ secrets.YAHOO_STORAGE_PASSPHRASE }}
+        run: |
+          printf '%s' "$YAHOO_STORAGE_PASSPHRASE" > yahoo-passphrase.txt
+
+          openssl enc -d -aes-256-cbc \
+            -pbkdf2 \
+            -iter 200000 \
+            -in yahoo-storage-state.json.enc \
+            -out .yahoo-storage-state.json \
+            -pass file:yahoo-passphrase.txt
+
+          rm yahoo-passphrase.txt
+
       - name: Test LeagueLab import
         env:
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
           python -c "import leaguelab; print('LeagueLab import successful')"
+
+      - name: Test Yahoo authentication
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python -c "
+          from leaguelab.yahoo.client import YahooFantasyClient
+          with YahooFantasyClient() as yahoo:
+              profile = yahoo.get_profile()
+              print('YAHOO AUTH SUCCESS' if profile else 'YAHOO AUTH FAILED')
+          "
