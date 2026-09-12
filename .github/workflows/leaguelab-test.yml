@@ -1,10 +1,10 @@
-name: LeagueLab Test
+name: LeagueLab Cloud Preflight
 
 on:
   workflow_dispatch:
 
 jobs:
-  yahoo-auth-test:
+  preflight:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,6 +25,19 @@ jobs:
         run: |
           python -m playwright install --with-deps chromium
 
+      - name: Recreate private config
+        env:
+          LEAGUELAB_MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
+          LEAGUELAB_NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
+        run: |
+          mkdir -p data/config
+
+          printf '%s' "$LEAGUELAB_MANAGERS_JSON" \
+            > data/config/managers.json
+
+          printf '%s' "$LEAGUELAB_NOTIFICATIONS_JSON" \
+            > data/config/notifications.json
+
       - name: Decrypt Yahoo storage state
         env:
           YAHOO_STORAGE_PASSPHRASE: ${{ secrets.YAHOO_STORAGE_PASSPHRASE }}
@@ -40,19 +53,43 @@ jobs:
 
           rm yahoo-passphrase.txt
 
-      - name: Test LeagueLab import
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src
+      - name: Validate JSON config
         run: |
-          python -c "import leaguelab; print('LeagueLab import successful')"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in [
+              Path("data/config/managers.json"),
+              Path("data/config/notifications.json"),
+          ]:
+              with path.open("r", encoding="utf-8") as f:
+                  json.load(f)
+              print(f"{path}: valid JSON")
+          PY
 
       - name: Test Yahoo authentication
         env:
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
-          python -c "
+          python - <<'PY'
           from leaguelab.yahoo.client import YahooFantasyClient
+
           with YahooFantasyClient() as yahoo:
               profile = yahoo.get_profile()
-              print('YAHOO AUTH SUCCESS' if profile else 'YAHOO AUTH FAILED')
-          "
+
+          if not profile:
+              raise SystemExit("Yahoo authentication failed")
+
+          print("Yahoo authentication successful")
+          PY
+
+      - name: Run LeagueLab live preflight
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+
+          LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
+          LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
+          LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
+        run: |
+          python -m leaguelab.live_preflight
