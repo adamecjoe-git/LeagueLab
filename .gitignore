@@ -29,3 +29,4 @@ README_BUILD.txt
 README_v6_6_2.txt
 # Yahoo authenticated session
 .yahoo-storage-state.json
+.yahoo-storage-passphrase.txt
