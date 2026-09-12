@@ -69,7 +69,7 @@ jobs:
           LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
         run: |
-          python -m leaguelab.live_preflight
+          python -m leaguelab.live_preflight --season 2026 --week 1 --check-yahoo
 
       - name: Send controlled notification test
         env:
