@@ -10,6 +10,7 @@ YAHOO_FANTASY_URL = "https://football.fantasysports.yahoo.com/"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BROWSER_PROFILE_DIR = PROJECT_ROOT / ".browser-profile"
+STORAGE_STATE_PATH = PROJECT_ROOT / ".yahoo-storage-state.json"
 DATA_DIR = PROJECT_ROOT / "data" / "raw" / "yahoo"
 
 
@@ -22,11 +23,22 @@ class YahooFantasyClient:
     def __enter__(self):
         self.playwright = sync_playwright().start()
 
-        self.browser = self.playwright.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_PROFILE_DIR),
-            channel="chrome",
-            headless=True,
-        )
+        # CI/cloud mode: use portable Playwright storage state when available.
+        if STORAGE_STATE_PATH.exists():
+            self.browser_instance = self.playwright.chromium.launch(
+                headless=True,
+            )
+            self.browser = self.browser_instance.new_context(
+                storage_state=str(STORAGE_STATE_PATH),
+            )
+        else:
+            # Local fallback: use the existing persistent Chrome profile.
+            self.browser_instance = None
+            self.browser = self.playwright.chromium.launch_persistent_context(
+                user_data_dir=str(BROWSER_PROFILE_DIR),
+                channel="chrome",
+                headless=True,
+            )
 
         self.page = (
             self.browser.pages[0]
@@ -45,6 +57,9 @@ class YahooFantasyClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.browser:
             self.browser.close()
+
+        if getattr(self, "browser_instance", None):
+            self.browser_instance.close()
 
         if self.playwright:
             self.playwright.stop()
