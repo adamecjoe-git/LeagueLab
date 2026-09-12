@@ -1,0 +1,154 @@
+name: LeagueLab Roster Alerts
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode"
+        required: true
+        default: "preview"
+        type: choice
+        options:
+          - preview
+          - test
+          - live
+
+      season:
+        description: "Fantasy season"
+        required: true
+        default: "2026"
+
+      week:
+        description: "Fantasy week"
+        required: true
+        default: "1"
+
+jobs:
+  roster-alerts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright Chromium
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Recreate private config
+        env:
+          LEAGUELAB_MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
+          LEAGUELAB_NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
+        run: |
+          mkdir -p data/config
+
+          printf '%s' "$LEAGUELAB_MANAGERS_JSON" \
+            > data/config/managers.json
+
+          printf '%s' "$LEAGUELAB_NOTIFICATIONS_JSON" \
+            > data/config/notifications.json
+
+      - name: Decrypt Yahoo storage state
+        env:
+          YAHOO_STORAGE_PASSPHRASE: ${{ secrets.YAHOO_STORAGE_PASSPHRASE }}
+        run: |
+          printf '%s' "$YAHOO_STORAGE_PASSPHRASE" > yahoo-passphrase.txt
+
+          openssl enc -d -aes-256-cbc \
+            -pbkdf2 \
+            -iter 200000 \
+            -in yahoo-storage-state.json.enc \
+            -out .yahoo-storage-state.json \
+            -pass file:yahoo-passphrase.txt
+
+          rm yahoo-passphrase.txt
+
+      - name: Bootstrap Yahoo team metadata
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          from leaguelab.yahoo.client import (
+              YahooFantasyClient,
+              find_league_keys,
+              save_json,
+          )
+
+          season = int("${{ inputs.season }}")
+
+          with YahooFantasyClient() as yahoo:
+              leagues = yahoo.get_leagues(season)
+
+              league_keys = list(
+                  dict.fromkeys(
+                      find_league_keys(leagues)
+                  )
+              )
+
+              if len(league_keys) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Yahoo NFL league for {season}, "
+                      f"found {len(league_keys)}: {league_keys}"
+                  )
+
+              league_key = league_keys[0]
+              teams = yahoo.get_teams(league_key)
+
+          output_dir = (
+              Path("data")
+              / "raw"
+              / "yahoo"
+              / str(season)
+              / league_key
+          )
+
+          output_dir.mkdir(
+              parents=True,
+              exist_ok=True,
+          )
+
+          save_json(
+              teams,
+              output_dir / "teams.json",
+          )
+
+          print(f"Yahoo metadata bootstrapped for {league_key}")
+          PY
+
+      - name: Run LeagueLab live preflight
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
+          LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
+          LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
+        run: |
+          python -m leaguelab.live_preflight \
+            --season "${{ inputs.season }}" \
+            --week "${{ inputs.week }}" \
+            --check-yahoo
+
+      - name: Run roster alert engine
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
+          LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
+          LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
+        run: |
+          python -m leaguelab.roster_alert_runner \
+            --season "${{ inputs.season }}" \
+            --week "${{ inputs.week }}" \
+            --mode "${{ inputs.mode }}" \
+            --refresh-schedule \
+            --refresh-yahoo
