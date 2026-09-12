@@ -62,6 +62,94 @@ jobs:
 
           rm yahoo-passphrase.txt
 
+      - name: Validate JSON config
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in [
+              Path("data/config/managers.json"),
+              Path("data/config/notifications.json"),
+          ]:
+              with path.open("r", encoding="utf-8") as f:
+                  json.load(f)
+
+              print(f"{path}: valid JSON")
+          PY
+
+      - name: Test Yahoo authentication
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python - <<'PY'
+          from leaguelab.yahoo.client import YahooFantasyClient
+
+          with YahooFantasyClient() as yahoo:
+              profile = yahoo.get_profile()
+
+          if not profile:
+              raise SystemExit("Yahoo authentication failed")
+
+          print("Yahoo authentication successful")
+          PY
+
+      - name: Bootstrap Yahoo team metadata
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          from leaguelab.yahoo.client import (
+              YahooFantasyClient,
+              find_league_keys,
+              save_json,
+          )
+
+          season = 2026
+
+          with YahooFantasyClient() as yahoo:
+              leagues = yahoo.get_leagues(season)
+
+              league_keys = list(
+                  dict.fromkeys(
+                      find_league_keys(leagues)
+                  )
+              )
+
+              if len(league_keys) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Yahoo NFL league for {season}, "
+                      f"found {len(league_keys)}: {league_keys}"
+                  )
+
+              league_key = league_keys[0]
+              teams = yahoo.get_teams(league_key)
+
+          output_dir = (
+              Path("data")
+              / "raw"
+              / "yahoo"
+              / str(season)
+              / league_key
+          )
+
+          output_dir.mkdir(
+              parents=True,
+              exist_ok=True,
+          )
+
+          save_json(
+              teams,
+              output_dir / "teams.json",
+          )
+
+          print(
+              f"Yahoo metadata bootstrapped for {league_key}"
+          )
+          PY
+
       - name: Run LeagueLab preflight
         env:
           PYTHONPATH: ${{ github.workspace }}/src
@@ -69,7 +157,10 @@ jobs:
           LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
         run: |
-          python -m leaguelab.live_preflight --season 2026 --week 1 --check-yahoo
+          python -m leaguelab.live_preflight \
+            --season 2026 \
+            --week 1 \
+            --check-yahoo
 
       - name: Send controlled notification test
         env:
