@@ -23,6 +23,11 @@ on:
         required: true
         default: "1"
 
+      only_team:
+        description: "Optional team filter for preview/test only"
+        required: false
+        default: "Hawk Tua Taco Viola"
+
 jobs:
   roster-alerts:
     runs-on: ubuntu-latest
@@ -145,10 +150,24 @@ jobs:
           LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
           LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
+          RUN_MODE: ${{ inputs.mode }}
+          ONLY_TEAM: ${{ inputs.only_team }}
+          SEASON: ${{ inputs.season }}
+          WEEK: ${{ inputs.week }}
         run: |
-          python -m leaguelab.roster_alert_runner \
-            --season "${{ inputs.season }}" \
-            --week "${{ inputs.week }}" \
-            --mode "${{ inputs.mode }}" \
-            --refresh-schedule \
-            --refresh-yahoo
+          if [ "$RUN_MODE" = "live" ]; then
+            python -m leaguelab.roster_alert_runner \
+              --season "$SEASON" \
+              --week "$WEEK" \
+              --mode live \
+              --refresh-schedule \
+              --refresh-yahoo
+          else
+            python -m leaguelab.roster_alert_runner \
+              --season "$SEASON" \
+              --week "$WEEK" \
+              --mode "$RUN_MODE" \
+              --only-team "$ONLY_TEAM" \
+              --refresh-schedule \
+              --refresh-yahoo
+          fi
