@@ -28,6 +28,44 @@ on:
         required: false
         default: "Hawk Tua Taco Viola"
 
+  # Lightweight checkpoint watcher.
+  #
+  # UTC schedule:
+  #   Thu/Fri: evening NFL window
+  #   Sat:     special late-season games
+  #   Sun:     London/early games through SNF
+  #   Mon:     MNF
+  #
+  # The dynamic scheduler decides whether an actual LeagueLab checkpoint
+  # is due. Yahoo/Playwright work only happens when a checkpoint is due.
+  schedule:
+    # Thursday evening / early Friday UTC
+    - cron: "*/10 22-23 * 9-12 4"
+    - cron: "*/10 0-4 * 9-12 5"
+
+    # Friday special-game window
+    - cron: "*/10 17-23 * 11-12 5"
+
+    # Saturday special-game window
+    - cron: "*/10 17-23 * 12,1 6"
+    - cron: "*/10 0-4 * 12,1 0"
+
+    # Sunday NFL window, including early international games
+    - cron: "*/10 12-23 * 9-12 0"
+    - cron: "*/10 0-4 * 9-12 1"
+
+    # Monday Night Football
+    - cron: "*/10 22-23 * 9-12 1"
+    - cron: "*/10 0-4 * 9-12 2"
+
+concurrency:
+  group: leaguelab-roster-alerts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   roster-alerts:
     runs-on: ubuntu-latest
@@ -41,16 +79,180 @@ jobs:
         with:
           python-version: "3.8"
 
+      # ------------------------------------------------------------
+      # Decide whether this run actually corresponds to a checkpoint.
+      #
+      # Manual runs always continue.
+      # Scheduled runs only continue when a real 45/10-minute checkpoint
+      # has become due and kickoff has not occurred yet.
+      # ------------------------------------------------------------
+
+      - name: Determine whether an alert checkpoint is due
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_MODE: ${{ inputs.mode }}
+          MANUAL_SEASON: ${{ inputs.season }}
+          MANUAL_WEEK: ${{ inputs.week }}
+          MANUAL_ONLY_TEAM: ${{ inputs.only_team }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+
+          def emit(name, value):
+              with output.open("a", encoding="utf-8") as f:
+                  f.write(f"{name}={value}\n")
+
+          event_name = os.environ.get("EVENT_NAME", "")
+
+          # --------------------------------------------------------
+          # Manual workflow run
+          # --------------------------------------------------------
+          if event_name == "workflow_dispatch":
+              mode = os.environ.get("MANUAL_MODE", "preview")
+              season = os.environ.get("MANUAL_SEASON", "2026")
+              week = os.environ.get("MANUAL_WEEK", "1")
+              only_team = os.environ.get("MANUAL_ONLY_TEAM", "")
+
+              emit("due", "true")
+              emit("mode", mode)
+              emit("season", season)
+              emit("week", week)
+              emit("only_team", only_team)
+
+              print("Manual workflow run.")
+              print(f"Mode: {mode}")
+              print(f"Season: {season}")
+              print(f"Week: {week}")
+              print(f"Only team: {only_team or '(none)'}")
+              raise SystemExit(0)
+
+          # --------------------------------------------------------
+          # Scheduled workflow run
+          # --------------------------------------------------------
+          proc = subprocess.run(
+              [
+                  "python",
+                  "-m",
+                  "leaguelab.dynamic_alert_scheduler",
+                  "--include-past",
+                  "--json",
+              ],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+
+          payload = json.loads(proc.stdout)
+
+          season = payload.get("season")
+          week = payload.get("week")
+          checkpoints = payload.get("checkpoints") or []
+
+          now = datetime.now(timezone.utc)
+
+          due_rows = []
+
+          for checkpoint in checkpoints:
+              run_at_text = checkpoint.get("run_at")
+              kickoffs = checkpoint.get("kickoffs") or []
+
+              if not run_at_text or not kickoffs:
+                  continue
+
+              run_at = datetime.fromisoformat(run_at_text).astimezone(timezone.utc)
+
+              kickoff_times = [
+                  datetime.fromisoformat(row["kickoff_at"]).astimezone(timezone.utc)
+                  for row in kickoffs
+                  if row.get("kickoff_at")
+              ]
+
+              if not kickoff_times:
+                  continue
+
+              earliest_kickoff = min(kickoff_times)
+
+              # The checkpoint must have arrived already, but we will still
+              # accept a delayed GitHub run as long as kickoff has not occurred.
+              if run_at <= now < earliest_kickoff:
+                  due_rows.append(
+                      {
+                          "run_at": run_at,
+                          "kickoff": earliest_kickoff,
+                          "minutes_before": kickoffs[0].get("minutes_before"),
+                      }
+                  )
+
+          if not due_rows:
+              emit("due", "false")
+              emit("mode", "live")
+              emit("season", season or "")
+              emit("week", week or "")
+              emit("only_team", "")
+
+              print("No LeagueLab roster-alert checkpoint is due.")
+              raise SystemExit(0)
+
+          # Pick the most recent due checkpoint. This prevents an old 45-minute
+          # checkpoint from taking precedence after the 10-minute checkpoint
+          # has become due.
+          selected = max(due_rows, key=lambda row: row["run_at"])
+
+          if season is None or week is None:
+              raise SystemExit(
+                  "A roster-alert checkpoint is due, but season/week "
+                  "could not be determined."
+              )
+
+          emit("due", "true")
+          emit("mode", "live")
+          emit("season", season)
+          emit("week", week)
+          emit("only_team", "")
+
+          print("LeagueLab checkpoint is due.")
+          print(f"Season: {season}")
+          print(f"Week: {week}")
+          print(
+              "Checkpoint: "
+              f"{selected['minutes_before']} minutes before kickoff"
+          )
+          print(f"Scheduled time: {selected['run_at'].isoformat()}")
+          print(f"Kickoff: {selected['kickoff'].isoformat()}")
+          print(f"Current UTC time: {now.isoformat()}")
+          PY
+
+      - name: No checkpoint due
+        if: steps.plan.outputs.due != 'true'
+        run: |
+          echo "No roster-alert checkpoint due. Nothing else to do."
+
+      # ------------------------------------------------------------
+      # Everything below runs ONLY when a real checkpoint is due
+      # or when this workflow was launched manually.
+      # ------------------------------------------------------------
+
       - name: Install Python dependencies
+        if: steps.plan.outputs.due == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Install Playwright Chromium
+        if: steps.plan.outputs.due == 'true'
         run: |
           python -m playwright install --with-deps chromium
 
       - name: Recreate private config
+        if: steps.plan.outputs.due == 'true'
         env:
           LEAGUELAB_MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
           LEAGUELAB_NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
@@ -64,6 +266,7 @@ jobs:
             > data/config/notifications.json
 
       - name: Decrypt Yahoo storage state
+        if: steps.plan.outputs.due == 'true'
         env:
           YAHOO_STORAGE_PASSPHRASE: ${{ secrets.YAHOO_STORAGE_PASSPHRASE }}
         run: |
@@ -78,11 +281,93 @@ jobs:
 
           rm yahoo-passphrase.txt
 
-      - name: Bootstrap Yahoo team metadata
+      # ------------------------------------------------------------
+      # Restore the latest production duplicate-suppression state.
+      #
+      # This is only done for LIVE runs. Preview/test runs must not
+      # read or modify production sent-alert history.
+      # ------------------------------------------------------------
+
+      - name: Restore latest roster-alert state
+        if: >
+          steps.plan.outputs.due == 'true' &&
+          steps.plan.outputs.mode == 'live'
         env:
-          PYTHONPATH: ${{ github.workspace }}/src
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
           python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          import zipfile
+          from pathlib import Path
+
+          repo = os.environ["GH_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+
+          api_url = (
+              f"https://api.github.com/repos/{repo}/actions/artifacts"
+              "?name=leaguelab-roster-alert-state&per_page=1"
+          )
+
+          req = urllib.request.Request(
+              api_url,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+
+          with urllib.request.urlopen(req) as response:
+              payload = json.load(response)
+
+          artifacts = payload.get("artifacts") or []
+
+          if not artifacts:
+              print("No previous roster-alert state artifact found.")
+              raise SystemExit(0)
+
+          artifact = artifacts[0]
+          download_url = artifact["archive_download_url"]
+
+          req = urllib.request.Request(
+              download_url,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+
+          zip_path = Path("roster-alert-state.zip")
+
+          with urllib.request.urlopen(req) as response:
+              zip_path.write_bytes(response.read())
+
+          destination = Path("data/state/roster_alerts")
+          destination.mkdir(parents=True, exist_ok=True)
+
+          with zipfile.ZipFile(zip_path, "r") as archive:
+              archive.extractall(destination)
+
+          zip_path.unlink()
+
+          print(
+              "Restored roster-alert state from artifact "
+              f"{artifact['id']}."
+          )
+          PY
+
+      - name: Bootstrap Yahoo team metadata
+        if: steps.plan.outputs.due == 'true'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          SEASON: ${{ steps.plan.outputs.season }}
+        run: |
+          python - <<'PY'
+          import os
           from pathlib import Path
 
           from leaguelab.yahoo.client import (
@@ -91,7 +376,7 @@ jobs:
               save_json,
           )
 
-          season = int("${{ inputs.season }}")
+          season = int(os.environ["SEASON"])
 
           with YahooFantasyClient() as yahoo:
               leagues = yahoo.get_leagues(season)
@@ -132,37 +417,44 @@ jobs:
           print(f"Yahoo metadata bootstrapped for {league_key}")
           PY
 
-      - name: Run LeagueLab live preflight
+      - name: Run LeagueLab preflight
+        if: steps.plan.outputs.due == 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
           LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
+          SEASON: ${{ steps.plan.outputs.season }}
+          WEEK: ${{ steps.plan.outputs.week }}
         run: |
           python -m leaguelab.live_preflight \
-            --season "${{ inputs.season }}" \
-            --week "${{ inputs.week }}" \
+            --season "$SEASON" \
+            --week "$WEEK" \
             --check-yahoo
 
       - name: Run roster alert engine
+        if: steps.plan.outputs.due == 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
           LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
-          RUN_MODE: ${{ inputs.mode }}
-          ONLY_TEAM: ${{ inputs.only_team }}
-          SEASON: ${{ inputs.season }}
-          WEEK: ${{ inputs.week }}
+          RUN_MODE: ${{ steps.plan.outputs.mode }}
+          ONLY_TEAM: ${{ steps.plan.outputs.only_team }}
+          SEASON: ${{ steps.plan.outputs.season }}
+          WEEK: ${{ steps.plan.outputs.week }}
         run: |
           if [ "$RUN_MODE" = "live" ]; then
+
             python -m leaguelab.roster_alert_runner \
               --season "$SEASON" \
               --week "$WEEK" \
               --mode live \
               --refresh-schedule \
               --refresh-yahoo
+
           else
+
             python -m leaguelab.roster_alert_runner \
               --season "$SEASON" \
               --week "$WEEK" \
@@ -170,4 +462,22 @@ jobs:
               --only-team "$ONLY_TEAM" \
               --refresh-schedule \
               --refresh-yahoo
+
           fi
+
+      # ------------------------------------------------------------
+      # Preserve updated sent_keys for the next cloud runner.
+      # ------------------------------------------------------------
+
+      - name: Save roster-alert state
+        if: >
+          always() &&
+          steps.plan.outputs.due == 'true' &&
+          steps.plan.outputs.mode == 'live'
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaguelab-roster-alert-state
+          path: data/state/roster_alerts/
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true
