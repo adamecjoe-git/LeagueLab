@@ -69,8 +69,36 @@ jobs:
         with:
           python-version: "3.8"
 
-      # This is intentionally before the planning step.
-      # It makes sure the LeagueLab scheduler has its Python dependencies.
+      # The dynamic scheduler reads notifications.json, so private config
+      # must exist before the planning step runs.
+      - name: Rebuild private LeagueLab configuration
+        env:
+          MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
+          NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config_dir = Path("data/config")
+          config_dir.mkdir(parents=True, exist_ok=True)
+
+          managers = os.environ["MANAGERS_JSON"]
+          notifications = os.environ["NOTIFICATIONS_JSON"]
+
+          (config_dir / "managers.json").write_text(
+              managers,
+              encoding="utf-8",
+          )
+
+          (config_dir / "notifications.json").write_text(
+              notifications,
+              encoding="utf-8",
+          )
+
+          print("Private LeagueLab configuration restored.")
+          PY
+
       - name: Install lightweight dependencies
         run: |
           python -m pip install --upgrade pip
@@ -241,8 +269,8 @@ jobs:
                   f"minutes_before={minutes_before}",
               )
 
-              # GitHub's scheduled execution may be a few minutes late.
-              # As long as kickoff has not occurred, allow the checkpoint.
+              # GitHub scheduled workflows may start a few minutes late.
+              # Allow the checkpoint until the associated kickoff occurs.
               if run_at <= now < earliest_kickoff:
                   due_rows.append(
                       {
@@ -270,8 +298,8 @@ jobs:
 
               raise SystemExit(0)
 
-          # If GitHub was delayed enough to overlap multiple windows,
-          # use the most recently scheduled checkpoint.
+          # If GitHub was delayed enough to overlap multiple checkpoints,
+          # use the most recently scheduled one.
           selected = max(
               due_rows,
               key=lambda row: row["run_at"],
@@ -307,41 +335,13 @@ jobs:
           )
           PY
 
-      # Everything below here only runs when there is actually
-      # a LeagueLab alert checkpoint to process.
+      # Everything below here only runs when an actual alert
+      # checkpoint is due or when the workflow was started manually.
+
       - name: Install Playwright Chromium
         if: steps.plan.outputs.due == 'true'
         run: |
           python -m playwright install --with-deps chromium
-
-      - name: Rebuild private LeagueLab configuration
-        if: steps.plan.outputs.due == 'true'
-        env:
-          MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
-          NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          config_dir = Path("data/config")
-          config_dir.mkdir(parents=True, exist_ok=True)
-
-          managers = os.environ["MANAGERS_JSON"]
-          notifications = os.environ["NOTIFICATIONS_JSON"]
-
-          (config_dir / "managers.json").write_text(
-              managers,
-              encoding="utf-8",
-          )
-
-          (config_dir / "notifications.json").write_text(
-              notifications,
-              encoding="utf-8",
-          )
-
-          print("Private LeagueLab configuration restored.")
-          PY
 
       - name: Decrypt Yahoo authentication state
         if: steps.plan.outputs.due == 'true'
@@ -375,7 +375,6 @@ jobs:
           import os
           import urllib.request
           import zipfile
-          from datetime import datetime
           from pathlib import Path
 
           repo = os.environ["REPOSITORY"]
@@ -410,9 +409,9 @@ jobs:
               raise SystemExit(0)
 
           artifacts = [
-              a
-              for a in payload.get("artifacts", [])
-              if not a.get("expired")
+              artifact
+              for artifact in payload.get("artifacts", [])
+              if not artifact.get("expired")
           ]
 
           if not artifacts:
@@ -421,7 +420,10 @@ jobs:
 
           latest = max(
               artifacts,
-              key=lambda a: a.get("created_at", ""),
+              key=lambda artifact: artifact.get(
+                  "created_at",
+                  "",
+              ),
           )
 
           print(
@@ -444,7 +446,10 @@ jobs:
           with urllib.request.urlopen(download_request) as response:
               archive_bytes = response.read()
 
-          destination = Path("data/state/roster_alerts")
+          destination = Path(
+              "data/state/roster_alerts"
+          )
+
           destination.mkdir(
               parents=True,
               exist_ok=True,
@@ -478,7 +483,9 @@ jobs:
 
           from leaguelab.yahoo.client import YahooFantasyClient
 
-          season = int("${{ steps.plan.outputs.season }}")
+          season = int(
+              "${{ steps.plan.outputs.season }}"
+          )
 
           root = (
               Path("data")
@@ -493,7 +500,9 @@ jobs:
           )
 
           with YahooFantasyClient() as client:
-              leagues = client.get_leagues(season)
+              leagues = client.get_leagues(
+                  season
+              )
 
               league_keys = []
 
@@ -505,7 +514,9 @@ jobs:
                               and isinstance(item, str)
                               and ".l." in item
                           ):
-                              league_keys.append(item)
+                              league_keys.append(
+                                  item
+                              )
 
                           walk(item)
 
@@ -536,12 +547,16 @@ jobs:
               )
 
           league_dir = root / league_key
+
           league_dir.mkdir(
               parents=True,
               exist_ok=True,
           )
 
-          teams_path = league_dir / "teams.json"
+          teams_path = (
+              league_dir
+              / "teams.json"
+          )
 
           teams_path.write_text(
               json.dumps(
