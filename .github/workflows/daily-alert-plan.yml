@@ -12,6 +12,9 @@ on:
     # Runs daily during the NFL fantasy season.
     - cron: "7 12 * 1,9-12 *"
 
+env:
+  TZ: America/Chicago
+
 permissions:
   contents: read
 
