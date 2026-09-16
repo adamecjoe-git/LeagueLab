@@ -1,11 +1,13 @@
 """
 LeagueLab dynamic roster-alert scheduler.
 
-Purpose
--------
-Build today's alert checkpoint plan from the real NFL schedule.  This module
-does not send notifications and does not create Windows tasks; the companion
-PowerShell script consumes its JSON output and manages Task Scheduler.
+Build an alert checkpoint plan from the NFL schedule.
+
+Reliability:
+- nflverse week discovery retries transient download failures.
+- the production HybridScheduleSource remains responsible for the actual
+  game schedule and its ESPN/cache fallback behavior.
+- source failures are raised; they are never treated as "no games".
 
 Python 3.8 compatible.
 """
@@ -14,12 +16,13 @@ import argparse
 import csv
 import io
 import json
+import sys
+import time
+import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 from leaguelab.roster_alert_runner import (
-    PROJECT_ROOT,
     _build_schedule_source,
     _load_notification_config,
 )
@@ -29,6 +32,9 @@ DEFAULT_NFLVERSE_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
     "schedules/games.csv"
 )
+
+DEFAULT_DOWNLOAD_ATTEMPTS = 4
+DEFAULT_RETRY_SECONDS = 3
 
 
 def _parse_iso_datetime(value):
@@ -43,30 +49,85 @@ def _parse_iso_datetime(value):
         return None
 
 
-def _download_text(url, timeout_seconds):
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "LeagueLab/1.0"},
+def _download_text(url, timeout_seconds, attempts=4, retry_seconds=3):
+    attempts = max(1, int(attempts))
+    retry_seconds = max(0, int(retry_seconds))
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "LeagueLab/1.0",
+                "Accept": "text/csv,*/*;q=0.8",
+            },
+        )
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout_seconds,
+            ) as response:
+                raw = response.read()
+
+            if not raw:
+                raise RuntimeError("NFL schedule source returned an empty response.")
+
+            return raw.decode("utf-8-sig")
+
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as exc:
+            last_error = exc
+            print(
+                "NFL schedule download failed "
+                "(attempt {}/{}): {}".format(attempt, attempts, exc),
+                file=sys.stderr,
+            )
+
+            if attempt < attempts:
+                delay = retry_seconds * attempt
+                print(
+                    "Retrying in {} second(s)...".format(delay),
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+
+    raise RuntimeError(
+        "NFL schedule download failed after {} attempts: {}".format(
+            attempts,
+            last_error,
+        )
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        raw = response.read()
-    return raw.decode("utf-8-sig")
 
 
 def _discover_regular_season_week(target_date, config):
     """
-    Discover the NFL season/week for target_date from nflverse's full schedule.
+    Discover the NFL season/week for target_date from nflverse.
 
-    Returns None on a day with no regular-season NFL game.
+    None means the schedule was downloaded successfully and there are no
+    regular-season games on target_date. Download failures raise instead.
     """
     schedule_cfg = config.get("schedule", {}) or {}
-    url = str(
-        schedule_cfg.get("nflverse_url")
-        or DEFAULT_NFLVERSE_URL
-    )
+    url = str(schedule_cfg.get("nflverse_url") or DEFAULT_NFLVERSE_URL)
     timeout_seconds = int(schedule_cfg.get("timeout_seconds", 15))
+    attempts = int(
+        schedule_cfg.get("download_attempts", DEFAULT_DOWNLOAD_ATTEMPTS)
+    )
+    retry_seconds = int(
+        schedule_cfg.get("retry_seconds", DEFAULT_RETRY_SECONDS)
+    )
 
-    text = _download_text(url, timeout_seconds)
+    text = _download_text(
+        url,
+        timeout_seconds,
+        attempts=attempts,
+        retry_seconds=retry_seconds,
+    )
     reader = csv.DictReader(io.StringIO(text))
 
     target_text = target_date.isoformat()
@@ -90,6 +151,7 @@ def _discover_regular_season_week(target_date, config):
         matches.append((season, week))
 
     distinct = sorted(set(matches))
+
     if not distinct:
         return None
 
@@ -175,8 +237,6 @@ def build_daily_plan(target_date, force_refresh=True, include_past=False, now=No
         for minutes_before in checkpoint_minutes:
             run_at = kickoff - timedelta(minutes=minutes_before)
 
-            # A normal morning run should never create tasks for times that have
-            # already passed.  --include-past exists only for plan validation.
             if (
                 not include_past
                 and target_date == local_now.date()
@@ -223,12 +283,7 @@ def _format_plan(plan):
         lines.append("No NFL regular-season games today.")
         return "\n".join(lines)
 
-    lines.append(
-        "NFL: {} Week {}".format(
-            plan["season"],
-            plan["week"],
-        )
-    )
+    lines.append("NFL: {} Week {}".format(plan["season"], plan["week"]))
     lines.append("Schedule: {}".format(plan.get("schedule") or "unknown"))
     lines.append("")
 
@@ -260,8 +315,8 @@ def _format_plan(plan):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Build today's LeagueLab roster-alert checkpoints from the "
-            "real NFL schedule."
+            "Build a LeagueLab roster-alert checkpoint plan from the real "
+            "NFL schedule."
         )
     )
     parser.add_argument(
@@ -277,7 +332,7 @@ def main():
     parser.add_argument(
         "--include-past",
         action="store_true",
-        help="Include checkpoints that have already passed (planning/testing only).",
+        help="Include checkpoints that have already passed.",
     )
     parser.add_argument(
         "--json",

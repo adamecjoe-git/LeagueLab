@@ -1,0 +1,99 @@
+name: LeagueLab Daily NFL Plan
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 12:07 UTC = 7:07 AM CDT / 6:07 AM CST.
+    # Runs daily during the NFL fantasy season.
+    - cron: "7 12 * 1,9-12 *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leaguelab-daily-nfl-plan
+  cancel-in-progress: false
+
+jobs:
+  build-plan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Rebuild private LeagueLab configuration
+        env:
+          MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
+          NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config_dir = Path("data/config")
+          config_dir.mkdir(parents=True, exist_ok=True)
+
+          (config_dir / "managers.json").write_text(
+              os.environ["MANAGERS_JSON"],
+              encoding="utf-8",
+          )
+          (config_dir / "notifications.json").write_text(
+              os.environ["NOTIFICATIONS_JSON"],
+              encoding="utf-8",
+          )
+          print("Private LeagueLab configuration restored.")
+          PY
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build today's NFL alert plan
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          TODAY="$(TZ=America/Chicago date +%F)"
+          mkdir -p data/state/daily_alert_plan
+
+          echo "Building LeagueLab plan for $TODAY"
+
+          python -m leaguelab.dynamic_alert_scheduler \
+            --date "$TODAY" \
+            --include-past \
+            --json \
+            > data/state/daily_alert_plan/plan.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/state/daily_alert_plan/plan.json")
+          plan = json.loads(path.read_text(encoding="utf-8"))
+
+          print("Plan date:", plan.get("date"))
+          print("Season:", plan.get("season"))
+          print("Week:", plan.get("week"))
+          print("Checkpoint groups:", len(plan.get("checkpoints") or []))
+
+          if plan.get("season") is None:
+              print("No NFL regular-season games today. No alert work is needed.")
+          else:
+              for row in plan.get("checkpoints") or []:
+                  print("Checkpoint:", row.get("run_at"))
+          PY
+
+      - name: Save today's NFL alert plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaguelab-daily-alert-plan
+          path: data/state/daily_alert_plan/plan.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true

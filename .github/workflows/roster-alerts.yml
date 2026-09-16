@@ -29,24 +29,9 @@ on:
         default: "Hawk Tua Taco Viola"
 
   schedule:
-    # Thursday evening / early Friday UTC
-    - cron: "*/10 22-23 * 9-12 4"
-    - cron: "*/10 0-4 * 9-12 5"
-
-    # Friday special-game window
-    - cron: "*/10 17-23 * 11-12 5"
-
-    # Saturday special-game window
-    - cron: "*/10 17-23 * 12,1 6"
-    - cron: "*/10 0-4 * 12,1 0"
-
-    # Sunday NFL window, including early international games
-    - cron: "*/10 12-23 * 9-12 0"
-    - cron: "*/10 0-4 * 9-12 1"
-
-    # Monday Night Football
-    - cron: "*/10 22-23 * 9-12 1"
-    - cron: "*/10 0-4 * 9-12 2"
+    # Lightweight watcher. It does NOT query nflverse unless a checkpoint
+    # from the morning plan is actually due.
+    - cron: "*/10 * * 1,9-12 *"
 
 permissions:
   contents: read
@@ -69,41 +54,6 @@ jobs:
         with:
           python-version: "3.8"
 
-      # The dynamic scheduler reads notifications.json, so private config
-      # must exist before the planning step runs.
-      - name: Rebuild private LeagueLab configuration
-        env:
-          MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
-          NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          config_dir = Path("data/config")
-          config_dir.mkdir(parents=True, exist_ok=True)
-
-          managers = os.environ["MANAGERS_JSON"]
-          notifications = os.environ["NOTIFICATIONS_JSON"]
-
-          (config_dir / "managers.json").write_text(
-              managers,
-              encoding="utf-8",
-          )
-
-          (config_dir / "notifications.json").write_text(
-              notifications,
-              encoding="utf-8",
-          )
-
-          print("Private LeagueLab configuration restored.")
-          PY
-
-      - name: Install lightweight dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
       - name: Determine whether an alert checkpoint is due
         id: plan
         env:
@@ -112,13 +62,15 @@ jobs:
           MANUAL_SEASON: ${{ inputs.season }}
           MANUAL_WEEK: ${{ inputs.week }}
           MANUAL_ONLY_TEAM: ${{ inputs.only_team }}
-          PYTHONPATH: ${{ github.workspace }}/src
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           python - <<'PY'
+          import io
           import json
           import os
-          import subprocess
-          import sys
+          import urllib.request
+          import zipfile
           from datetime import datetime, timezone
           from pathlib import Path
 
@@ -126,13 +78,10 @@ jobs:
 
           def emit(name, value):
               with github_output.open("a", encoding="utf-8") as f:
-                  f.write(f"{name}={value}\n")
+                  f.write("{}={}\n".format(name, value))
 
           event_name = os.environ.get("EVENT_NAME", "")
 
-          # ----------------------------------------------------------
-          # Manual run
-          # ----------------------------------------------------------
           if event_name == "workflow_dispatch":
               mode = os.environ.get("MANUAL_MODE", "preview")
               season = os.environ.get("MANUAL_SEASON", "2026")
@@ -144,81 +93,122 @@ jobs:
               emit("season", season)
               emit("week", week)
               emit("only_team", only_team)
+              emit("checkpoint", "manual")
 
               print("Manual workflow run.")
-              print(f"Mode: {mode}")
-              print(f"Season: {season}")
-              print(f"Week: {week}")
-              print(f"Only team: {only_team or '(none)'}")
-
+              print("Mode:", mode)
+              print("Season:", season)
+              print("Week:", week)
+              print("Only team:", only_team or "(none)")
               raise SystemExit(0)
 
-          # ----------------------------------------------------------
-          # Scheduled run
-          # ----------------------------------------------------------
-          cmd = [
-              sys.executable,
-              "-m",
-              "leaguelab.dynamic_alert_scheduler",
-              "--include-past",
-              "--json",
-          ]
+          repo = os.environ["REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          artifact_name = "leaguelab-daily-alert-plan"
 
-          print("Running dynamic scheduler:")
-          print(" ".join(cmd))
+          url = (
+              "https://api.github.com/repos/{}/actions/artifacts"
+              "?name={}&per_page=100"
+          ).format(repo, artifact_name)
 
-          proc = subprocess.run(
-              cmd,
-              capture_output=True,
-              text=True,
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": "Bearer {}".format(token),
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
           )
 
-          if proc.stdout:
-              print()
-              print("----- Scheduler stdout -----")
-              print(proc.stdout)
-              print("----- End scheduler stdout -----")
-
-          if proc.stderr:
-              print()
-              print("----- Scheduler stderr -----")
-              print(proc.stderr)
-              print("----- End scheduler stderr -----")
-
-          if proc.returncode != 0:
-              print()
-              print(
-                  "ERROR: dynamic_alert_scheduler returned "
-                  f"exit code {proc.returncode}"
-              )
-              raise SystemExit(proc.returncode)
-
           try:
-              payload = json.loads(proc.stdout)
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  payload = json.load(response)
           except Exception as exc:
-              print()
-              print("ERROR: Scheduler output was not valid JSON.")
-              print(f"{type(exc).__name__}: {exc}")
-              raise
+              raise SystemExit(
+                  "Could not retrieve today's LeagueLab plan artifact: {}".format(exc)
+              )
 
-          season = payload.get("season")
-          week = payload.get("week")
-          checkpoints = payload.get("checkpoints") or []
+          artifacts = [
+              item
+              for item in payload.get("artifacts", [])
+              if not item.get("expired")
+          ]
+
+          if not artifacts:
+              raise SystemExit(
+                  "No daily LeagueLab plan artifact exists. "
+                  "The morning planner may have failed."
+              )
+
+          latest = max(
+              artifacts,
+              key=lambda item: item.get("created_at", ""),
+          )
+
+          download_request = urllib.request.Request(
+              latest["archive_download_url"],
+              headers={
+                  "Authorization": "Bearer {}".format(token),
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+
+          with urllib.request.urlopen(download_request, timeout=20) as response:
+              archive_bytes = response.read()
+
+          with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+              names = archive.namelist()
+              plan_names = [name for name in names if name.endswith("plan.json")]
+              if not plan_names:
+                  raise SystemExit("Daily plan artifact does not contain plan.json.")
+              plan = json.loads(
+                  archive.read(plan_names[0]).decode("utf-8")
+              )
+
+          today = datetime.now().astimezone().date().isoformat()
+          # GitHub runners are UTC. Use a shell-independent Central date.
+          import subprocess
+          today = subprocess.check_output(
+              ["date", "+%F"],
+              env=dict(os.environ, TZ="America/Chicago"),
+              text=True,
+          ).strip()
+
+          if plan.get("date") != today:
+              raise SystemExit(
+                  "Daily plan is stale. Expected {}, found {}. "
+                  "The morning planner may have failed.".format(
+                      today,
+                      plan.get("date"),
+                  )
+              )
+
+          season = plan.get("season")
+          week = plan.get("week")
+          checkpoints = plan.get("checkpoints") or []
+
+          if season is None or week is None or not checkpoints:
+              emit("due", "false")
+              emit("mode", "live")
+              emit("season", season or "")
+              emit("week", week or "")
+              emit("only_team", "")
+              emit("checkpoint", "")
+              print("Today's saved plan has no NFL alert checkpoints.")
+              raise SystemExit(0)
 
           now = datetime.now(timezone.utc)
-
-          print()
-          print(f"Current UTC time: {now.isoformat()}")
-          print(f"Scheduler season: {season}")
-          print(f"Scheduler week: {week}")
-          print(f"Checkpoint groups returned: {len(checkpoints)}")
-
           due_rows = []
+
+          print("Saved plan date:", plan.get("date"))
+          print("Season:", season)
+          print("Week:", week)
+          print("Current UTC:", now.isoformat())
 
           for checkpoint in checkpoints:
               run_at_text = checkpoint.get("run_at")
               kickoffs = checkpoint.get("kickoffs") or []
-
               if not run_at_text or not kickoffs:
                   continue
 
@@ -226,51 +216,40 @@ jobs:
                   run_at = datetime.fromisoformat(
                       run_at_text
                   ).astimezone(timezone.utc)
-              except Exception as exc:
-                  print(
-                      f"Skipping invalid run_at "
-                      f"{run_at_text!r}: {exc}"
-                  )
+              except Exception:
                   continue
 
               kickoff_times = []
-
               for row in kickoffs:
                   kickoff_text = row.get("kickoff_at")
-
                   if not kickoff_text:
                       continue
-
                   try:
                       kickoff_times.append(
                           datetime.fromisoformat(
                               kickoff_text
                           ).astimezone(timezone.utc)
                       )
-                  except Exception as exc:
-                      print(
-                          f"Skipping invalid kickoff "
-                          f"{kickoff_text!r}: {exc}"
-                      )
+                  except Exception:
+                      pass
 
               if not kickoff_times:
                   continue
 
               earliest_kickoff = min(kickoff_times)
-
-              minutes_before = kickoffs[0].get(
-                  "minutes_before"
-              )
+              minutes_before = kickoffs[0].get("minutes_before")
 
               print(
                   "Checkpoint:",
-                  f"run_at={run_at.isoformat()}",
-                  f"kickoff={earliest_kickoff.isoformat()}",
-                  f"minutes_before={minutes_before}",
+                  run_at.isoformat(),
+                  "kickoff:",
+                  earliest_kickoff.isoformat(),
+                  "minutes_before:",
+                  minutes_before,
               )
 
-              # GitHub scheduled workflows may start a few minutes late.
-              # Allow the checkpoint until the associated kickoff occurs.
+              # The 10-minute watcher may arrive late. A checkpoint remains
+              # eligible until its associated kickoff.
               if run_at <= now < earliest_kickoff:
                   due_rows.append(
                       {
@@ -280,71 +259,187 @@ jobs:
                       }
                   )
 
-          # ----------------------------------------------------------
-          # Nothing due
-          # ----------------------------------------------------------
           if not due_rows:
               emit("due", "false")
               emit("mode", "live")
-              emit("season", season or "")
-              emit("week", week or "")
+              emit("season", season)
+              emit("week", week)
               emit("only_team", "")
-
-              print()
-              print(
-                  "No LeagueLab roster-alert checkpoint "
-                  "is currently due."
-              )
-
+              emit("checkpoint", "")
+              print("No saved LeagueLab checkpoint is currently due.")
               raise SystemExit(0)
 
-          # If GitHub was delayed enough to overlap multiple checkpoints,
-          # use the most recently scheduled one.
-          selected = max(
-              due_rows,
-              key=lambda row: row["run_at"],
-          )
-
-          if season is None or week is None:
-              raise SystemExit(
-                  "Checkpoint is due, but season/week "
-                  "could not be determined."
-              )
+          selected = max(due_rows, key=lambda row: row["run_at"])
 
           emit("due", "true")
           emit("mode", "live")
           emit("season", season)
           emit("week", week)
           emit("only_team", "")
+          emit("checkpoint", selected["minutes_before"])
 
-          print()
-          print("LeagueLab checkpoint is due.")
-          print(f"Season: {season}")
-          print(f"Week: {week}")
-          print(
-              "Checkpoint: "
-              f"{selected['minutes_before']} minutes"
-          )
-          print(
-              "Scheduled time: "
-              f"{selected['run_at'].isoformat()}"
-          )
-          print(
-              "Kickoff: "
-              f"{selected['kickoff'].isoformat()}"
-          )
+          print("Saved checkpoint is due.")
+          print("Checkpoint:", selected["minutes_before"], "minutes")
+          print("Scheduled:", selected["run_at"].isoformat())
+          print("Morning kickoff:", selected["kickoff"].isoformat())
           PY
 
-      # Everything below here only runs when an actual alert
-      # checkpoint is due or when the workflow was started manually.
+      # Everything below this point runs only for a manual run or when the
+      # saved morning plan says a checkpoint is due.
+
+      - name: Rebuild private LeagueLab configuration
+        if: steps.plan.outputs.due == 'true'
+        env:
+          MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
+          NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config_dir = Path("data/config")
+          config_dir.mkdir(parents=True, exist_ok=True)
+
+          (config_dir / "managers.json").write_text(
+              os.environ["MANAGERS_JSON"],
+              encoding="utf-8",
+          )
+          (config_dir / "notifications.json").write_text(
+              os.environ["NOTIFICATIONS_JSON"],
+              encoding="utf-8",
+          )
+          print("Private LeagueLab configuration restored.")
+          PY
+
+      - name: Install dependencies
+        if: steps.plan.outputs.due == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Recheck live NFL schedule
+        id: recheck
+        if: >
+          steps.plan.outputs.due == 'true' &&
+          github.event_name != 'workflow_dispatch'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          PLANNED_SEASON: ${{ steps.plan.outputs.season }}
+          PLANNED_WEEK: ${{ steps.plan.outputs.week }}
+          PLANNED_CHECKPOINT: ${{ steps.plan.outputs.checkpoint }}
+        run: |
+          TODAY="$(TZ=America/Chicago date +%F)"
+
+          set +e
+          python -m leaguelab.dynamic_alert_scheduler \
+            --date "$TODAY" \
+            --include-past \
+            --json \
+            > /tmp/live-plan.json
+          RC=$?
+          set -e
+
+          if [ "$RC" -ne 0 ]; then
+            echo "WARNING: live schedule recheck failed."
+            echo "Using the morning plan as the safe fallback."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          plan = json.loads(
+              Path("/tmp/live-plan.json").read_text(encoding="utf-8")
+          )
+
+          expected_season = int(os.environ["PLANNED_SEASON"])
+          expected_week = int(os.environ["PLANNED_WEEK"])
+          expected_checkpoint = int(os.environ["PLANNED_CHECKPOINT"])
+          now = datetime.now(timezone.utc)
+
+          if (
+              int(plan.get("season") or -1) != expected_season
+              or int(plan.get("week") or -1) != expected_week
+          ):
+              raise SystemExit(
+                  "Live schedule returned an unexpected season/week."
+              )
+
+          due = False
+          next_time = None
+
+          for checkpoint in plan.get("checkpoints") or []:
+              kickoffs = checkpoint.get("kickoffs") or []
+              if not kickoffs:
+                  continue
+
+              minutes_before = int(kickoffs[0].get("minutes_before"))
+              if minutes_before != expected_checkpoint:
+                  continue
+
+              run_at = datetime.fromisoformat(
+                  checkpoint["run_at"]
+              ).astimezone(timezone.utc)
+
+              kickoff_times = [
+                  datetime.fromisoformat(row["kickoff_at"]).astimezone(timezone.utc)
+                  for row in kickoffs
+                  if row.get("kickoff_at")
+              ]
+              if not kickoff_times:
+                  continue
+
+              kickoff = min(kickoff_times)
+
+              if run_at <= now < kickoff:
+                  due = True
+                  break
+
+              if run_at > now and (next_time is None or run_at < next_time):
+                  next_time = run_at
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+
+          with output.open("a", encoding="utf-8") as f:
+              f.write("proceed={}\n".format("true" if due else "false"))
+
+          if due:
+              print("Live schedule confirms this checkpoint is due.")
+          else:
+              print("Live schedule says this checkpoint is not due now.")
+              if next_time is not None:
+                  print("Updated checkpoint time:", next_time.isoformat())
+                  print(
+                      "The lightweight watcher will pick it up on a later run."
+                  )
+          PY
+
+      - name: Decide whether alert engine should proceed
+        id: proceed
+        if: steps.plan.outputs.due == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RECHECK_PROCEED: ${{ steps.recheck.outputs.proceed }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$RECHECK_PROCEED" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Playwright Chromium
-        if: steps.plan.outputs.due == 'true'
+        if: steps.proceed.outputs.run == 'true'
         run: |
           python -m playwright install --with-deps chromium
 
       - name: Decrypt Yahoo authentication state
-        if: steps.plan.outputs.due == 'true'
+        if: steps.proceed.outputs.run == 'true'
         env:
           YAHOO_STORAGE_PASSPHRASE: ${{ secrets.YAHOO_STORAGE_PASSPHRASE }}
         run: |
@@ -358,12 +453,11 @@ jobs:
             -pass env:YAHOO_STORAGE_PASSPHRASE
 
           test -s .yahoo-storage-state.json
-
           echo "Yahoo authentication state decrypted."
 
       - name: Restore production roster-alert state
         if: >
-          steps.plan.outputs.due == 'true' &&
+          steps.proceed.outputs.run == 'true' &&
           steps.plan.outputs.mode == 'live'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -379,39 +473,34 @@ jobs:
 
           repo = os.environ["REPOSITORY"]
           token = os.environ["GH_TOKEN"]
-
           artifact_name = "leaguelab-roster-alert-state"
 
           url = (
-              f"https://api.github.com/repos/{repo}"
-              f"/actions/artifacts"
-              f"?name={artifact_name}&per_page=100"
-          )
+              "https://api.github.com/repos/{}/actions/artifacts"
+              "?name={}&per_page=100"
+          ).format(repo, artifact_name)
 
           request = urllib.request.Request(
               url,
               headers={
-                  "Authorization": f"Bearer {token}",
+                  "Authorization": "Bearer {}".format(token),
                   "Accept": "application/vnd.github+json",
                   "X-GitHub-Api-Version": "2022-11-28",
               },
           )
 
           try:
-              with urllib.request.urlopen(request) as response:
+              with urllib.request.urlopen(request, timeout=20) as response:
                   payload = json.load(response)
           except Exception as exc:
-              print(
-                  "Could not query previous alert-state "
-                  f"artifacts: {exc}"
-              )
+              print("Could not query previous alert state:", exc)
               print("Continuing with no prior state.")
               raise SystemExit(0)
 
           artifacts = [
-              artifact
-              for artifact in payload.get("artifacts", [])
-              if not artifact.get("expired")
+              item
+              for item in payload.get("artifacts", [])
+              if not item.get("expired")
           ]
 
           if not artifacts:
@@ -420,90 +509,47 @@ jobs:
 
           latest = max(
               artifacts,
-              key=lambda artifact: artifact.get(
-                  "created_at",
-                  "",
-              ),
+              key=lambda item: item.get("created_at", ""),
           )
-
-          print(
-              "Restoring artifact:",
-              latest.get("name"),
-              latest.get("created_at"),
-          )
-
-          download_url = latest["archive_download_url"]
 
           download_request = urllib.request.Request(
-              download_url,
+              latest["archive_download_url"],
               headers={
-                  "Authorization": f"Bearer {token}",
+                  "Authorization": "Bearer {}".format(token),
                   "Accept": "application/vnd.github+json",
                   "X-GitHub-Api-Version": "2022-11-28",
               },
           )
 
-          with urllib.request.urlopen(download_request) as response:
+          with urllib.request.urlopen(download_request, timeout=20) as response:
               archive_bytes = response.read()
 
-          destination = Path(
-              "data/state/roster_alerts"
-          )
+          destination = Path("data/state/roster_alerts")
+          destination.mkdir(parents=True, exist_ok=True)
 
-          destination.mkdir(
-              parents=True,
-              exist_ok=True,
-          )
-
-          with zipfile.ZipFile(
-              io.BytesIO(archive_bytes)
-          ) as archive:
+          with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
               archive.extractall(destination)
 
-          restored = list(
-              destination.rglob("*.json")
-          )
-
-          print(
-              f"Restored {len(restored)} state file(s)."
-          )
-
-          for path in restored:
-              print(" ", path)
+          restored = list(destination.rglob("*.json"))
+          print("Restored {} state file(s).".format(len(restored)))
           PY
 
       - name: Bootstrap Yahoo league metadata
-        if: steps.plan.outputs.due == 'true'
+        if: steps.proceed.outputs.run == 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-
           from leaguelab.yahoo.client import YahooFantasyClient
 
-          season = int(
-              "${{ steps.plan.outputs.season }}"
-          )
-
-          root = (
-              Path("data")
-              / "raw"
-              / "yahoo"
-              / str(season)
-          )
-
-          root.mkdir(
-              parents=True,
-              exist_ok=True,
-          )
+          season = int("${{ steps.plan.outputs.season }}")
+          root = Path("data") / "raw" / "yahoo" / str(season)
+          root.mkdir(parents=True, exist_ok=True)
 
           with YahooFantasyClient() as client:
-              leagues = client.get_leagues(
-                  season
-              )
-
+              leagues = client.get_leagues(season)
               league_keys = []
 
               def walk(value):
@@ -514,65 +560,40 @@ jobs:
                               and isinstance(item, str)
                               and ".l." in item
                           ):
-                              league_keys.append(
-                                  item
-                              )
-
+                              league_keys.append(item)
                           walk(item)
-
                   elif isinstance(value, list):
                       for item in value:
                           walk(item)
 
               walk(leagues)
-
-              league_keys = sorted(
-                  set(league_keys)
-              )
+              league_keys = sorted(set(league_keys))
 
               if len(league_keys) != 1:
                   raise RuntimeError(
-                      "Expected exactly one Yahoo NFL league "
-                      f"for {season}; found: {league_keys}"
+                      "Expected exactly one Yahoo NFL league for {}; found: {}".format(
+                          season,
+                          league_keys,
+                      )
                   )
 
               league_key = league_keys[0]
-
-              print(
-                  f"Yahoo league: {league_key}"
-              )
-
-              teams = client.get_teams(
-                  league_key
-              )
+              print("Yahoo league:", league_key)
+              teams = client.get_teams(league_key)
 
           league_dir = root / league_key
+          league_dir.mkdir(parents=True, exist_ok=True)
 
-          league_dir.mkdir(
-              parents=True,
-              exist_ok=True,
-          )
-
-          teams_path = (
-              league_dir
-              / "teams.json"
-          )
-
+          teams_path = league_dir / "teams.json"
           teams_path.write_text(
-              json.dumps(
-                  teams,
-                  indent=2,
-              ),
+              json.dumps(teams, indent=2),
               encoding="utf-8",
           )
-
-          print(
-              f"Wrote Yahoo team metadata: {teams_path}"
-          )
+          print("Wrote Yahoo team metadata:", teams_path)
           PY
 
       - name: Run LeagueLab live preflight
-        if: steps.plan.outputs.due == 'true'
+        if: steps.proceed.outputs.run == 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
@@ -584,7 +605,7 @@ jobs:
             --week "${{ steps.plan.outputs.week }}"
 
       - name: Run roster alert engine
-        if: steps.plan.outputs.due == 'true'
+        if: steps.proceed.outputs.run == 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           LEAGUELAB_EMAIL_ADDRESS: ${{ secrets.LEAGUELAB_EMAIL_ADDRESS }}
@@ -628,7 +649,7 @@ jobs:
       - name: Save production roster-alert state
         if: >
           always() &&
-          steps.plan.outputs.due == 'true' &&
+          steps.proceed.outputs.run == 'true' &&
           steps.plan.outputs.mode == 'live'
         uses: actions/upload-artifact@v4
         with:
