@@ -41,6 +41,49 @@ def to_float(value):
         return 0.0
 
 
+def build_league_pulse(player_rows, end_week):
+    """Build starter-only league-wide points and touchdown totals."""
+    completed = [
+        row for row in player_rows
+        if int(to_float(row.get("week"))) <= int(end_week)
+        and is_true(row.get("is_starter"))
+    ]
+    current = [
+        row for row in completed
+        if int(to_float(row.get("week"))) == int(end_week)
+    ]
+
+    weeks = sorted({
+        int(to_float(row.get("week")))
+        for row in completed
+        if int(to_float(row.get("week"))) > 0
+    })
+    weeks_played = len(weeks)
+    team_count = len({
+        str(row.get("team_key") or row.get("team_id") or "")
+        for row in current
+        if row.get("team_key") or row.get("team_id")
+    })
+
+    week_points = sum(to_float(row.get("points")) for row in current)
+    season_points = sum(to_float(row.get("points")) for row in completed)
+    week_tds = sum(to_float(row.get("touchdowns")) for row in current)
+    season_tds = sum(to_float(row.get("touchdowns")) for row in completed)
+
+    return {
+        "week": int(end_week),
+        "weeks_played": weeks_played,
+        "team_count": team_count,
+        "week_points": round(week_points, 2),
+        "season_points": round(season_points, 2),
+        "points_per_week": round(season_points / weeks_played, 2) if weeks_played else 0.0,
+        "avg_team_score": round(week_points / team_count, 2) if team_count else 0.0,
+        "week_touchdowns": int(week_tds) if float(week_tds).is_integer() else round(week_tds, 2),
+        "season_touchdowns": int(season_tds) if float(season_tds).is_integer() else round(season_tds, 2),
+        "touchdowns_per_week": round(season_tds / weeks_played, 2) if weeks_played else 0.0,
+    }
+
+
 def rank_week_rows(week_rows):
     """
     Assign competition rank by weekly score.
@@ -94,6 +137,14 @@ def build_all_play_rows(team_rows, end_week=14):
         week_rows = by_week[week]
         rank_by_score = rank_week_rows(week_rows)
 
+        # Build a same-week score lookup so matchup results remain reliable
+        # even when Yahoo omits opponent_points/result from a team payload.
+        score_by_team = {
+            str(item.get("team_key") or ""): to_float(item.get("points"))
+            for item in week_rows
+            if item.get("team_key")
+        }
+
         for row in week_rows:
             score = to_float(row["points"])
             wins = 0
@@ -122,6 +173,22 @@ def build_all_play_rows(team_rows, end_week=14):
             else:
                 expected_weekly_wins = 0.0
 
+            actual_result = str(row.get("result") or "").strip().upper()
+            if actual_result not in {"W", "L", "T"}:
+                opponent_score = None
+                opponent_key = str(row.get("opponent_team_key") or "").strip()
+                if opponent_key:
+                    opponent_score = score_by_team.get(opponent_key)
+                if opponent_score is None:
+                    opponent_score = to_float(row.get("opponent_points"))
+                if opponent_score is not None:
+                    if score > opponent_score:
+                        actual_result = "W"
+                    elif score < opponent_score:
+                        actual_result = "L"
+                    else:
+                        actual_result = "T"
+
             output.append(
                 {
                     "season": int(row["season"]),
@@ -130,14 +197,9 @@ def build_all_play_rows(team_rows, end_week=14):
                     "team_id": row["team_id"],
                     "team_name": row["team_name"],
                     "points": round(score, 2),
-                    "projected_points": round(
-                        to_float(row.get("projected_points")),
-                        2,
-                    ),
+                    "projected_points": round(to_float(row.get("projected_points")), 2),
                     "weekly_rank": rank_by_score[score],
-                    "actual_result": str(
-                        row.get("result") or ""
-                    ).strip().upper(),
+                    "actual_result": actual_result,
                     "all_play_wins": wins,
                     "all_play_losses": losses,
                     "all_play_ties": ties,
@@ -238,7 +300,6 @@ def build_weekly_team_analytics(all_play_rows):
                     "team_id": row["team_id"],
                     "team_name": row["team_name"],
                     "weekly_score": row["points"],
-                    "projected_points": row.get("projected_points", 0.0),
                     "weekly_rank": row["weekly_rank"],
                     "actual_result": result,
                     "actual_wins": actual_wins,
@@ -1608,167 +1669,98 @@ def build_schedule_strength_rows(
     end_week,
 ):
     """
-    Build Strength of Schedule (SOS).
+    Build schedule-to-date Strength of Schedule (SOS).
 
-    SOS measures how difficult each team's actual opponents performed
-    in the specific weeks they were faced. The opponent's weekly
-    all-play win probability is used rather than season record.
+    SOS is the average of the actual scores posted by each team's opponents
+    in the specific weeks those opponents were faced. The raw opponent
+    scoring average is also converted to a league-relative 0-1 percentile.
     """
-
-    weekly_ap = {}
-
-    for row in all_play_rows:
-        weekly_ap[
-            (
-                int(row["week"]),
-                row["team_key"],
-            )
-        ] = to_float(
-            row["expected_weekly_wins"]
-        )
-
     eligible = [
-        row
-        for row in team_rows
-        if int(row["week"]) <= end_week
+        row for row in team_rows
+        if int(row["week"]) <= int(end_week)
     ]
 
     teams = {}
-    opponent_strengths = defaultdict(list)
     opponent_scores = defaultdict(list)
+    by_week_team_key = {}
+    by_week_team_name = {}
+
+    for row in eligible:
+        week = int(row["week"])
+        team_key = str(row.get("team_key") or "").strip()
+        team_name = str(row.get("team_name") or "").strip()
+        if team_key:
+            by_week_team_key[(week, team_key)] = row
+        if team_name:
+            by_week_team_name[(week, team_name)] = row
 
     for row in eligible:
         team_key = row["team_key"]
         teams[team_key] = {
-            "team_id": row.get(
-                "team_id",
-                "",
-            ),
+            "team_id": row.get("team_id", ""),
             "team_name": row["team_name"],
             "season": int(row["season"]),
         }
 
-        opponent_key = str(
-            row.get(
-                "opponent_team_key"
-            )
-            or ""
-        ).strip()
-
-        opponent_name = str(
-            row.get(
-                "opponent_team_name"
-            )
-            or ""
-        ).strip()
+        week = int(row["week"])
+        opponent_key = str(row.get("opponent_team_key") or "").strip()
+        opponent_name = str(row.get("opponent_team_name") or "").strip()
 
         if not opponent_key and not opponent_name:
             continue
 
-        week = int(row["week"])
+        opponent_score = row.get("opponent_points")
 
-        if opponent_key:
-            opponent_ap = weekly_ap.get(
-                (
-                    week,
-                    opponent_key,
-                )
-            )
-        else:
-            opponent_ap = None
+        if opponent_score is None or str(opponent_score).strip() == "":
+            opponent_row = None
+            if opponent_key:
+                opponent_row = by_week_team_key.get((week, opponent_key))
+            if opponent_row is None and opponent_name:
+                opponent_row = by_week_team_name.get((week, opponent_name))
+            if opponent_row is not None:
+                opponent_score = opponent_row.get("points")
 
-        if opponent_ap is None:
-            # Fallback by opponent name for older normalized data.
-            opponent_ap = next(
-                (
-                    to_float(
-                        ap_row[
-                            "expected_weekly_wins"
-                        ]
-                    )
-                    for ap_row in all_play_rows
-                    if int(ap_row["week"]) == week
-                    and ap_row["team_name"] == opponent_name
-                ),
-                None,
-            )
-
-        if opponent_ap is None:
+        if opponent_score is None or str(opponent_score).strip() == "":
             continue
 
-        opponent_strengths[
-            team_key
-        ].append(
-            opponent_ap
+        opponent_scores[team_key].append(to_float(opponent_score))
+
+    raw_sos = {}
+    for team_key in teams:
+        scores = opponent_scores.get(team_key, [])
+        raw_sos[team_key] = (
+            sum(scores) / len(scores) if scores else 0.0
         )
 
-        opponent_score = row.get(
-            "opponent_points"
-        )
-
-        if str(
-            opponent_score
-            or ""
-        ).strip():
-            opponent_scores[
-                team_key
-            ].append(
-                to_float(
-                    opponent_score
+    sos_percentiles = {}
+    if raw_sos:
+        if len(set(raw_sos.values())) == 1:
+            sos_percentiles = {
+                team_key: 0.5 for team_key in raw_sos
+            }
+        else:
+            for team_key, value in raw_sos.items():
+                lower = sum(1 for other in raw_sos.values() if other < value)
+                equal = sum(1 for other in raw_sos.values() if other == value)
+                average_rank_zero_based = lower + (equal - 1) / 2.0
+                sos_percentiles[team_key] = (
+                    average_rank_zero_based / (len(raw_sos) - 1)
                 )
-            )
 
     rows = []
-
     for team_key, metadata in teams.items():
-        sos_values = opponent_strengths.get(
-            team_key,
-            [],
-        )
-        opp_scores = opponent_scores.get(
-            team_key,
-            [],
-        )
-
-        sos = (
-            sum(sos_values)
-            / len(sos_values)
-            if sos_values
-            else 0.0
-        )
-
-        avg_opponent_score = (
-            sum(opp_scores)
-            / len(opp_scores)
-            if opp_scores
-            else 0.0
-        )
-
+        scores = opponent_scores.get(team_key, [])
         rows.append(
             {
-                "season": metadata[
-                    "season"
-                ],
-                "through_week": int(
-                    end_week
-                ),
+                "season": metadata["season"],
+                "through_week": int(end_week),
                 "team_key": team_key,
-                "team_id": metadata[
-                    "team_id"
-                ],
-                "team_name": metadata[
-                    "team_name"
-                ],
-                "games_with_opponent": len(
-                    sos_values
-                ),
-                "avg_opponent_score": round(
-                    avg_opponent_score,
-                    2,
-                ),
+                "team_id": metadata["team_id"],
+                "team_name": metadata["team_name"],
+                "games_with_opponent": len(scores),
+                "avg_opponent_score": round(raw_sos.get(team_key, 0.0), 2),
                 "strength_of_schedule": round(
-                    sos,
-                    4,
+                    sos_percentiles.get(team_key, 0.0), 4
                 ),
             }
         )
@@ -1776,23 +1768,15 @@ def build_schedule_strength_rows(
     rows = sorted(
         rows,
         key=lambda row: (
-            -to_float(
-                row[
-                    "strength_of_schedule"
-                ]
-            ),
+            -to_float(row["avg_opponent_score"]),
             row["team_name"].lower(),
         ),
     )
 
-    for rank, row in enumerate(
-        rows,
-        start=1,
-    ):
+    for rank, row in enumerate(rows, start=1):
         row["sos_rank"] = rank
 
     return rows
-
 
 def save_week_at_a_glance_csv(
     path,
@@ -1937,6 +1921,11 @@ def run_weekly_analytics(season, end_week=14):
         )
     )
 
+    league_pulse = build_league_pulse(
+        player_rows,
+        end_week,
+    )
+
     output_dir = (
         OUTPUT_ROOT
         / str(season)
@@ -2018,7 +2007,6 @@ def run_weekly_analytics(season, end_week=14):
             "team_id",
             "team_name",
             "weekly_score",
-            "projected_points",
             "weekly_rank",
             "actual_result",
             "actual_wins",
@@ -2143,6 +2131,7 @@ def run_weekly_analytics(season, end_week=14):
         "lineup_summary": lineup_summary,
         "power_rankings": power_rankings,
         "schedule_strength": schedule_strength,
+        "league_pulse": league_pulse,
         "all_play_path": all_play_path,
         "weekly_analytics_path": (
             weekly_analytics_path

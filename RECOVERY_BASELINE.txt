@@ -1,0 +1,17 @@
+LeagueLab recovered pre-V8 baseline
+Reconstructed from the exact conversation file sequence after V7 and before V8.
+
+src/leaguelab/normalize_with_slots.py
+  Source: original V7 package (turn 341). Retains League Pulse touchdown normalization.
+
+src/leaguelab/analytics.py
+  Source: analytics_sos_fixed.py (turn 364), the final analytics file before V8.
+  Includes post-V7 matchup-result correction and schedule-to-date SOS based on actual opponent scores.
+
+src/leaguelab/weekly_email.py
+  Source: weekly_email_current_fixed.py (turn 361), the final weekly_email file before V8.
+  Includes post-V7 commissioner/editorial and wording changes.
+
+src/leaguelab/newsletter_blocks.py
+  Source: newsletter_blocks_fixed.py (turn 361), the final newsletter_blocks file before V8.
+  V8 did not overwrite this file, but it is included so this ZIP is a complete recovery checkpoint.

@@ -38,78 +38,6 @@ def movement(value):
     return "+{}".format(n) if n > 0 else (str(n) if n < 0 else "-")
 
 
-def money_num(value, default=0.0):
-    """Parse numeric or formatted money values such as 10, '10', '$10', '$10.00'."""
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).strip()
-    if not text:
-        return default
-    text = text.replace("$", "").replace(",", "").strip()
-    try:
-        return float(text)
-    except (TypeError, ValueError):
-        return default
-
-
-def challenge_payout_amount(row):
-    """Return challenge winnings across historical/current newsletter schemas."""
-    if not isinstance(row, dict):
-        return 0.0
-    return money_num(
-        row.get(
-            "amount",
-            row.get(
-                "amount_won",
-                row.get("payout", row.get("winnings", 0)),
-            ),
-        )
-    )
-
-
-def challenge_payout_rows(data):
-    """Return reliable final challenge payout rows.
-
-    Historical seasons can have a payout_leaderboard whose amount fields are
-    empty/zero while challenge_winners still contains the completed prizes.
-    Prefer the leaderboard only when it carries real payout dollars; otherwise
-    rebuild the team totals from challenge_winners.
-    """
-    data = data or {}
-    leaderboard = data.get("payout_leaderboard") or data.get("payouts") or []
-    if leaderboard and sum(challenge_payout_amount(row) for row in leaderboard) > 0:
-        return leaderboard
-
-    totals = {}
-    for row in data.get("challenge_winners") or []:
-        name = str(row.get("team_name") or row.get("team") or "").strip()
-        if not name:
-            continue
-        amount = money_num(
-            row.get(
-                "prize",
-                row.get(
-                    "amount",
-                    row.get(
-                        "amount_won",
-                        row.get("payout", row.get("winnings", 0)),
-                    ),
-                ),
-            )
-        )
-        totals[name] = totals.get(name, 0.0) + amount
-
-    return [
-        {"team_name": name, "amount": amount}
-        for name, amount in sorted(
-            totals.items(),
-            key=lambda item: (-item[1], item[0].lower()),
-        )
-    ]
-
-
 def section(title, content, subtitle=""):
     if not content:
         return ""
@@ -151,7 +79,12 @@ def build_matchups(glance):
             continue
         seen.add(key)
         team_score = num(row.get("score"))
-        opponent_score = num(row.get("opponent_points", by_name.get(opponent, {}).get("score")))
+        opponent_score = row.get("opponent_points")
+        # A blank opponent_points value must fall back to the reciprocal
+        # opponent row's actual score; otherwise num("") turns it into 0.
+        if opponent_score is None or str(opponent_score).strip() == "":
+            opponent_score = by_name.get(opponent, {}).get("score")
+        opponent_score = num(opponent_score)
         if team_score >= opponent_score:
             winner, winner_score, loser, loser_score = team, team_score, opponent, opponent_score
         else:
@@ -420,7 +353,7 @@ def beyond_box_score(ctx, season=False):
     weekly_rows = ctx.get("all_play_week") or []
     sos = ctx.get("sos") or []
 
-    weekly_overachiever = ""
+    weekly_all_play = ""
     weekly_luckiest = ""
     weekly_unluckiest = ""
     season_all_play_leader = ""
@@ -431,66 +364,22 @@ def beyond_box_score(ctx, season=False):
     season_weakest_sos = ""
 
     if weekly_rows and not season:
-        projected_rows = [
-            row for row in weekly_rows
-            if num(row.get("projected_points")) > 0
-        ]
-
-        if projected_rows:
-            best = max(
-                projected_rows,
-                key=lambda r: (
-                    num(r.get("points"))
-                    - num(r.get("projected_points"))
-                ),
-            )
-            delta = (
-                num(best.get("points"))
-                - num(best.get("projected_points"))
-            )
-            weekly_overachiever = highlight(
-                "This Week • Overachiever",
-                best.get("team_name", "-"),
-                "{:+.2f} vs projection".format(delta),
-            )
-        else:
-            # Fallback for historical data without Yahoo projections:
-            # compare this week's score with the team's average entering
-            # the week. This keeps the metric meaningful without inventing
-            # projection data.
-            current_week = int(ctx.get("week", 0))
-            history = ctx.get("all_weekly_rows") or []
-            prior_by_team = {}
-            for history_row in history:
-                if int(num(history_row.get("week"))) >= current_week:
-                    continue
-                key = str(history_row.get("team_key") or "")
-                prior_by_team.setdefault(key, []).append(
-                    num(history_row.get("weekly_score"))
-                )
-
-            candidates = []
-            for row in weekly_rows:
-                key = str(row.get("team_key") or "")
-                prior = prior_by_team.get(key) or []
-                if prior:
-                    prior_avg = sum(prior) / len(prior)
-                    candidates.append((
-                        num(row.get("points")) - prior_avg,
-                        row,
-                        prior_avg,
-                    ))
-
-            if candidates:
-                delta, best, prior_avg = max(
-                    candidates,
-                    key=lambda item: item[0],
-                )
-                weekly_overachiever = highlight(
-                    "This Week • Overachiever",
-                    best.get("team_name", "-"),
-                    "{:+.2f} vs entering avg".format(delta),
-                )
+        best = max(
+            weekly_rows,
+            key=lambda r: (
+                num(r.get("all_play_wins"))
+                + .5 * num(r.get("all_play_ties"))
+            ),
+        )
+        weekly_all_play = highlight(
+            "This Week • All-Play King",
+            best.get("team_name", "-"),
+            "{}-{}-{}".format(
+                int(num(best.get("all_play_wins"))),
+                int(num(best.get("all_play_losses"))),
+                int(num(best.get("all_play_ties"))),
+            ),
+        )
 
         def weekly_luck(row):
             result = str(row.get("actual_result") or "").upper()
@@ -571,12 +460,12 @@ def beyond_box_score(ctx, season=False):
         ]
     else:
         # Row-major order for the 3-column grid:
-        # C1 Weekly: Overachiever / Luckiest / Unluckiest
+        # C1 Weekly: All-Play King / Luckiest / Unluckiest
         # C2 Season: All-Play Leader / Luckiest / Unluckiest
         # C3 Season: All-Play Bottom / Toughest SOS / Weakest SOS
         rows = [
             (
-                weekly_overachiever,
+                weekly_all_play,
                 season_all_play_leader,
                 season_all_play_bottom,
             ),
@@ -622,154 +511,11 @@ def upcoming_matchups(ctx, title="Next Week's Matchups"):
         ar = "#{}".format(a["power_rank"]) if a.get("power_rank") else "#-"
         br = "#{}".format(b["power_rank"]) if b.get("power_rank") else "#-"
         watch = '<div class="watch">Matchup to Watch</div>' if index == data.get("matchup_to_watch") else ""
-        ap = a.get("projected_points")
-        bp = b.get("projected_points")
-        ap_html = (
-            ' <span class="projection">• Proj {}</span>'.format(f(ap))
-            if ap is not None and num(ap) > 0 else ""
-        )
-        bp_html = (
-            ' <span class="projection">• Proj {}</span>'.format(f(bp))
-            if bp is not None and num(bp) > 0 else ""
-        )
-        cards.append('<div class="upcoming">{}<div><strong>{} {}</strong> <span>({})</span>{}</div><div class="versus">vs</div><div><strong>{} {}</strong> <span>({})</span>{}</div></div>'.format(
-            watch, ar, escape(a["team_name"]), escape(a["record"]), ap_html, br, escape(b["team_name"]), escape(b["record"]), bp_html
+        cards.append('<div class="upcoming">{}<div><strong>{} {}</strong> <span>({})</span></div><div class="versus">vs</div><div><strong>{} {}</strong> <span>({})</span></div></div>'.format(
+            watch, ar, escape(a["team_name"]), escape(a["record"]), br, escape(b["team_name"]), escape(b["record"])
         ))
     subtitle = "Week {} • Rank shown is LeagueLab Power Ranking".format(data.get("week", ""))
     return section(title, '<div class="upcoming-grid">{}</div>'.format("".join(cards)), subtitle)
-
-
-
-def _next_round_card(item, label):
-    if not item:
-        return ""
-    a = item.get("team_a") or {}
-    b = item.get("team_b") or {}
-    if not a or not b:
-        return ""
-
-    def team_line(team):
-        projection = team.get("projected_points")
-        projection_html = (
-            ' <span class="projection">• Proj {}</span>'.format(f(projection))
-            if projection is not None and num(projection) > 0
-            else ""
-        )
-        return '<strong>#{} {}</strong>{}'.format(
-            team.get("seed", "-"),
-            escape(str(team.get("team_name", "-"))),
-            projection_html,
-        )
-
-    return (
-        '<div class="upcoming"><div class="watch">{}</div>'
-        '<div>{}</div><div class="versus">vs</div><div>{}</div></div>'
-    ).format(
-        escape(str(label)),
-        team_line(a),
-        team_line(b),
-    )
-
-
-def _toilet_as_bracket_matchup(item):
-    if not item:
-        return None
-    return {
-        "team_a": {
-            "seed": item.get("team_a_seed"),
-            "team_key": item.get("team_a_key"),
-            "team_name": item.get("team_a_name"),
-            "projected_points": item.get("team_a_projected_points"),
-        },
-        "team_b": {
-            "seed": item.get("team_b_seed"),
-            "team_key": item.get("team_b_key"),
-            "team_name": item.get("team_b_name"),
-            "projected_points": item.get("team_b_projected_points"),
-        },
-    }
-
-
-def next_round_matchups(ctx):
-    """Postseason-aware next-round preview, including the Toilet Bowl."""
-    week = int(ctx.get("week", 0))
-    data = ctx.get("postseason_data") or {}
-    playoff = data.get("playoff") or {}
-    toilet = data.get("toilet_bowl") or {}
-    cards = []
-    next_week = week + 1
-
-    if week == 14:
-        for item in playoff.get("quarterfinals") or []:
-            cards.append(_next_round_card(item, "Playoff Quarterfinal"))
-        for pair in toilet.get("preview") or []:
-            cards.append(_next_round_card(pair, "Toilet Bowl Semifinal"))
-
-    elif week == 15:
-        for item in playoff.get("championship_semifinals") or []:
-            cards.append(_next_round_card(item, "Playoff Semifinal"))
-        for item in playoff.get("consolation_semifinals") or []:
-            cards.append(_next_round_card(item, "Consolation Semifinal"))
-        toilet_final = _toilet_as_bracket_matchup(
-            toilet.get("championship")
-        )
-        if toilet_final:
-            cards.append(_next_round_card(toilet_final, "Toilet Bowl Final"))
-
-    elif week == 16:
-        finals = playoff.get("finals") or {}
-        labels = (
-            ("championship", "Championship"),
-            ("third_place", "3rd Place"),
-            ("fifth_place", "5th Place"),
-            ("seventh_place", "7th Place"),
-        )
-        for key, label in labels:
-            if finals.get(key):
-                cards.append(_next_round_card(finals[key], label))
-
-    cards = [card for card in cards if card]
-    if not cards:
-        return ""
-
-    return section(
-        "Next Round Matchups",
-        '<div class="upcoming-grid">{}</div>'.format("".join(cards)),
-        "Week {} • Final regular-season seeds shown".format(next_week),
-    )
-
-
-def season_accolades(ctx):
-    if int(ctx.get("week", 0)) < 17:
-        return ""
-    try:
-        from leaguelab.season_accolades import build_season_accolades
-        awards = build_season_accolades(ctx.get("season"))
-    except (ImportError, OSError, ValueError):
-        awards = []
-
-    if not awards:
-        return ""
-
-    cards = []
-    for award in awards:
-        cards.append(
-            '<div class="accolade-card">'
-            '<div class="accolade-icon">{}</div>'
-            '<div class="accolade-title">{}</div>'
-            '<div class="accolade-winner">{}</div>'
-            '<div class="accolade-detail">{}</div>'
-            '</div>'.format(
-                escape(str(award.get("icon", ""))),
-                escape(str(award.get("title", ""))),
-                escape(str(award.get("winner", "-"))),
-                escape(str(award.get("detail", ""))),
-            )
-        )
-    return section(
-        "Season Accolades",
-        '<div class="accolades">{}</div>'.format("".join(cards)),
-    )
 
 
 def league_admin(ctx):
@@ -806,238 +552,55 @@ def losers_trophy(ctx):
     return section("Loser's Trophy", highlight("12th Place", loser.get("team_name", "-"), "Regular-season finish"))
 
 
-def _bracket_team(team, winner_key=None):
-    if not team:
-        return '<div class="bracket-team bracket-team-empty">TBD</div>'
-    winner = bool(
-        winner_key
-        and str(team.get("team_key") or "") == str(winner_key)
-    )
-    # A winner_key means the matchup is complete.  Highlight the winner
-    # and loser with the newsletter's existing soft result palette. Pending
-    # matchups (including projections) remain neutral.
-    if winner:
-        classes = "bracket-team winner"
-    elif winner_key:
-        classes = "bracket-team loser"
-    else:
-        classes = "bracket-team"
-    score = team.get("score")
-    projection = team.get("projected_points")
-    if score is not None:
-        score_html = '<span class="bracket-score">{}</span>'.format(f(score))
-    elif projection is not None and num(projection) > 0:
-        score_html = '<span class="bracket-score bracket-projection">Proj {}</span>'.format(f(projection))
-    else:
-        score_html = ""
-    return (
-        '<div class="{}"><span class="bracket-seed">#{}</span>'
-        '<span class="bracket-name">{}</span>{}</div>'
-    ).format(
-        classes,
-        team.get("seed", "-"),
-        escape(str(team.get("team_name", "-"))),
-        score_html,
-    )
-
-
-def _bracket_matchup(item, label):
-    if not item:
-        return (
-            '<div class="bracket-matchup pending">'
-            '<div class="bracket-label">{}</div>'
-            '<div class="bracket-team bracket-team-empty">TBD</div>'
-            '<div class="bracket-team bracket-team-empty">TBD</div></div>'
-        ).format(escape(str(label)))
-    return (
-        '<div class="bracket-matchup"><div class="bracket-label">{}</div>'
-        '{}{}</div>'
-    ).format(
-        escape(str(label)),
-        _bracket_team(item.get("team_a"), item.get("winner_key")),
-        _bracket_team(item.get("team_b"), item.get("winner_key")),
-    )
-
-
-def _playoff_bracket_html(playoff):
-    if not playoff:
-        return ""
-
-    qfs = playoff.get("quarterfinals") or []
-    semis = playoff.get("championship_semifinals") or []
-    consolation = playoff.get("consolation_semifinals") or []
-    finals = playoff.get("finals") or {}
-
-    qf_html = "".join(
-        _bracket_matchup(item, "Quarterfinal") for item in qfs
-    )
-    championship_sf = "".join(
-        _bracket_matchup(
-            semis[index] if index < len(semis) else None,
-            "Semifinal",
-        )
-        for index in range(2)
-    )
-    consolation_sf = "".join(
-        _bracket_matchup(
-            consolation[index] if index < len(consolation) else None,
-            "Consolation Semifinal",
-        )
-        for index in range(2)
-    )
-
-    return (
-        '<div class="bracket-group">'
-        '<div class="bracket-heading">Championship Bracket</div>'
-        '<div class="bracket bracket-main">'
-        '<div class="bracket-round bracket-qf">{}</div>'
-        '<div class="bracket-round bracket-sf">{}</div>'
-        '<div class="bracket-round bracket-final">{}{}</div>'
-        '</div>'
-        '<div class="bracket-heading bracket-heading-secondary">'
-        'Consolation / Placement Bracket</div>'
-        '<div class="bracket bracket-consolation">'
-        '<div class="bracket-round bracket-qf-source">'
-        '<div class="bracket-source-note">Quarterfinal losers</div></div>'
-        '<div class="bracket-round bracket-sf">{}</div>'
-        '<div class="bracket-round bracket-final">{}{}</div>'
-        '</div></div>'
-    ).format(
-        qf_html,
-        championship_sf,
-        _bracket_matchup(finals.get("championship"), "Final"),
-        _bracket_matchup(finals.get("third_place"), "3rd Place"),
-        consolation_sf,
-        _bracket_matchup(finals.get("fifth_place"), "5th Place"),
-        _bracket_matchup(finals.get("seventh_place"), "7th Place"),
-    )
+def _seed_pair_cards(pairings, title, subtitle="Ranking shown is final regular-season standing"):
+    cards = []
+    for pair in pairings or []:
+        a, b = pair.get("team_a", {}), pair.get("team_b", {})
+        cards.append('<div class="upcoming"><div><strong>#{} {}</strong></div><div class="versus">vs</div><div><strong>#{} {}</strong></div></div>'.format(
+            a.get("seed", "-"), escape(str(a.get("team_name", "-"))), b.get("seed", "-"), escape(str(b.get("team_name", "-")))
+        ))
+    return section(title, '<div class="upcoming-grid">{}</div>'.format("".join(cards)) if cards else "", subtitle)
 
 
 def playoff_preview(ctx):
-    playoff = (ctx.get("postseason_data") or {}).get("playoff") or {}
-    return section(
-        "Playoff Bracket / Preview",
-        _playoff_bracket_html(playoff),
-        "Seeds are final regular-season standings.",
-    )
-
-
-def playoff_results(ctx):
-    playoff = (ctx.get("postseason_data") or {}).get("playoff") or {}
-    return section(
-        "Playoff Bracket",
-        _playoff_bracket_html(playoff),
-        "Seeds are final regular-season standings. Completed matchup winners are highlighted.",
-    )
-
-
-def _toilet_matchup(item, label):
-    if not item:
-        return _bracket_matchup(None, label)
-    return _bracket_matchup({
-        "team_a": {
-            "seed": item.get("team_a_seed"),
-            "team_key": item.get("team_a_key"),
-            "team_name": item.get("team_a_name"),
-            "score": item.get("team_a_score"),
-            "projected_points": item.get("team_a_projected_points"),
-        },
-        "team_b": {
-            "seed": item.get("team_b_seed"),
-            "team_key": item.get("team_b_key"),
-            "team_name": item.get("team_b_name"),
-            "score": item.get("team_b_score"),
-            "projected_points": item.get("team_b_projected_points"),
-        },
-        "winner_key": item.get("winner_key"),
-    }, label)
-
-
-def _toilet_bracket_html(data):
-    if not data:
-        return ""
-
-    semis = data.get("semifinals") or []
-    if semis:
-        semi_html = "".join(
-            _toilet_matchup(item, "Semifinal") for item in semis
-        )
-    else:
-        semi_html = "".join(
-            _bracket_matchup({
-                "team_a": pair.get("team_a"),
-                "team_b": pair.get("team_b"),
-                "winner_key": None,
-            }, "Semifinal")
-            for pair in (data.get("preview") or [])
-        )
-
-    return (
-        '<div class="bracket-group"><div class="bracket-heading">'
-        'Toilet Bowl</div><div class="bracket bracket-toilet">'
-        '<div class="bracket-round bracket-sf">{}</div>'
-        '<div class="bracket-round bracket-final">{}</div>'
-        '</div></div>'
-    ).format(
-        semi_html,
-        _toilet_matchup(data.get("championship"), "Final"),
-    )
+    data = ctx.get("postseason_data") or {}
+    return _seed_pair_cards(data.get("playoff_preview"), "Playoff Bracket / Preview")
 
 
 def toilet_bowl_preview(ctx):
     toilet = (ctx.get("postseason_data") or {}).get("toilet_bowl") or {}
-    return section(
-        "Toilet Bowl Bracket / Preview",
-        _toilet_bracket_html(toilet),
-        "Seeds are final regular-season standings.",
-    )
+    return _seed_pair_cards(toilet.get("preview"), "Toilet Bowl Bracket / Preview")
+
+
+def _result_cards(results):
+    cards = []
+    for item in results or []:
+        a, b = item.get("team_a", {}), item.get("team_b", {})
+        cards.append('<div class="matchup"><div class="matchup-team"><span>#{} {}</span><strong>{}</strong></div><div class="matchup-team"><span>#{} {}</span><strong>{}</strong></div></div>'.format(
+            a.get("seed", "-"), escape(str(a.get("team_name", "-"))), f(a.get("score")),
+            b.get("seed", "-"), escape(str(b.get("team_name", "-"))), f(b.get("score"))
+        ))
+    return '<div class="matchups">{}</div>'.format("".join(cards)) if cards else ""
+
+
+def playoff_results(ctx):
+    return section("Playoff Matchup Results / Bracket", _result_cards((ctx.get("postseason_data") or {}).get("playoff_results")))
 
 
 def toilet_bowl(ctx):
-    toilet = (ctx.get("postseason_data") or {}).get("toilet_bowl") or {}
-    return section(
-        "Toilet Bowl Bracket",
-        _toilet_bracket_html(toilet),
-        "Seeds are final regular-season standings. Completed matchup winners are highlighted.",
-    )
-
-
-def league_champion(ctx):
-    if int(ctx.get("week", 0)) < 17:
-        return ""
-    champion = ((ctx.get("postseason_data") or {}).get("playoff") or {}).get("champion") or {}
-    if not champion:
-        return ""
-    return section(
-        "League Champion",
-        '<div class="champion-block">'
-        '<div style="font-size:52px;line-height:1;margin-bottom:8px;">&#127942;</div>'
-        '<div class="champion-kicker">League Champion</div>'
-        '<div class="champion-name">#{} {}</div></div>'.format(
-            champion.get("seed", "-"),
-            escape(str(champion.get("team_name", "-"))),
-        ),
-    )
+    data = (ctx.get("postseason_data") or {}).get("toilet_bowl") or {}
+    results = []
+    for item in data.get("semifinals", []):
+        results.append({"team_a": {"seed": item.get("team_a_seed"), "team_name": item.get("team_a_name"), "score": item.get("team_a_score")}, "team_b": {"seed": item.get("team_b_seed"), "team_name": item.get("team_b_name"), "score": item.get("team_b_score")}})
+    item = data.get("championship")
+    if item:
+        results.append({"team_a": {"seed": item.get("team_a_seed"), "team_name": item.get("team_a_name"), "score": item.get("team_a_score")}, "team_b": {"seed": item.get("team_b_seed"), "team_name": item.get("team_b_name"), "score": item.get("team_b_score")}})
+    return section("Toilet Bowl Results / Bracket", _result_cards(results))
 
 
 def toilet_bowl_winner(ctx):
-    if int(ctx.get("week", 0)) < 17:
-        return ""
     champion = ((ctx.get("postseason_data") or {}).get("toilet_bowl") or {}).get("champion") or {}
-    if not champion:
-        return ""
-    return section(
-        "Toilet Bowl Champion",
-        '<div class="champion-block">'
-        '<div style="font-size:52px;line-height:1;margin-bottom:8px;">&#128701;</div>'
-        '<div class="champion-kicker">Toilet Bowl Champion</div>'
-        '<div class="champion-name">#{} {}</div>'
-        '<div class="champion-detail">${:.0f} payout</div></div>'.format(
-            champion.get("seed", "-"),
-            escape(str(champion.get("team_name", "-"))),
-            num(champion.get("payout")),
-        ),
-    )
+    return section("Toilet Bowl Winner", highlight("Winner", champion.get("team_name", "-"), "${:.0f} payout".format(num(champion.get("payout"))))) if champion else ""
 
 
 def championship_matchup(ctx):
@@ -1046,96 +609,13 @@ def championship_matchup(ctx):
 
 
 def challenge_winners(ctx):
-    winners = (ctx.get("challenge_data") or {}).get("challenge_winners", [])
-    if not winners:
-        return ""
-
-    rows = [
-        [
-            row.get("name", ""),
-            row.get("team_name", ""),
-            "${:.0f}".format(num(row.get("prize"))),
-        ]
-        for row in winners
-    ]
-    return section(
-        "Challenge Winners",
-        table(["Challenge", "Winner", "Prize"], rows, True),
-    )
+    rows = [[r.get("name", ""), r.get("team_name", ""), "${}".format(r.get("prize", 0))] for r in (ctx.get("challenge_data") or {}).get("challenge_winners", [])]
+    return section("Challenge Winners", table(["Challenge", "Winner", "Prize"], rows, True))
 
 
 def challenge_payout_leaderboard(ctx):
-    leaderboard = challenge_payout_rows(ctx.get("challenge_data"))
-    if not leaderboard:
-        return ""
-
-    rows = [
-        [
-            index,
-            row.get("team_name", ""),
-            "${:.0f}".format(challenge_payout_amount(row)),
-        ]
-        for index, row in enumerate(leaderboard, start=1)
-    ]
-    return section(
-        "Challenge Payout Leaderboard",
-        table(["Rank", "Team", "Winnings"], rows, True),
-    )
-
-
-def total_payouts(ctx):
-    league_rows = (
-        (ctx.get("postseason_data") or {}).get("league_payouts") or []
-    )
-    challenge_rows = challenge_payout_rows(ctx.get("challenge_data"))
-
-    league = {}
-    challenges = {}
-    teams = set()
-
-    for row in league_rows:
-        name = str(row.get("team_name") or "").strip()
-        if name:
-            teams.add(name)
-            league[name] = league.get(name, 0.0) + num(row.get("amount"))
-
-    for row in challenge_rows:
-        name = str(row.get("team_name") or "").strip()
-        if name:
-            teams.add(name)
-            challenges[name] = (
-                challenges.get(name, 0.0) + challenge_payout_amount(row)
-            )
-
-    if not teams:
-        return ""
-
-    ordered = sorted(
-        teams,
-        key=lambda name: (
-            -(league.get(name, 0.0) + challenges.get(name, 0.0)),
-            -league.get(name, 0.0),
-            name.lower(),
-        ),
-    )
-    rows = [
-        [
-            name,
-            "${:.0f}".format(league.get(name, 0.0)),
-            "${:.0f}".format(challenges.get(name, 0.0)),
-        ]
-        for name in ordered
-    ]
-    rows.append([
-        "TOTAL",
-        "${:.0f}".format(sum(league.values())),
-        "${:.0f}".format(sum(challenges.values())),
-    ])
-
-    return section(
-        "Total Payouts",
-        table(["Team", "League", "Challenges"], rows, True),
-    )
+    rows = [[r.get("team_name", ""), "${}".format(r.get("amount", 0))] for r in (ctx.get("challenge_data") or {}).get("payout_leaderboard", [])]
+    return section("Final Challenge Payout Leaderboard", table(["Team", "Winnings"], rows, True))
 
 
 def generic_postseason(ctx, key, title):
@@ -1175,15 +655,13 @@ def render(name, ctx):
         "toilet_bowl": toilet_bowl,
         "toilet_bowl_winner": toilet_bowl_winner,
         "championship_matchup": championship_matchup,
-        "next_round_matchups": next_round_matchups,
-        "champion": league_champion,
+        "next_round_matchups": lambda c: upcoming_matchups(c, "Next Round Matchups"),
+        "champion": lambda c: generic_postseason(c, "champion", "League Champion"),
         "final_playoff_results": playoff_results,
         "toilet_bowl_final": toilet_bowl,
         "final_season_results": lambda c: standings(c, True),
         "challenge_winners": challenge_winners,
         "challenge_payout_leaderboard": challenge_payout_leaderboard,
-        "total_payouts": total_payouts,
-        "season_accolades": season_accolades,
         "payout_summary": lambda c: generic_postseason(c, "payout_summary", "Payout Summary"),
     }
     return mapping[name](ctx)

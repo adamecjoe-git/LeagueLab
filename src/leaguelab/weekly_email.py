@@ -19,6 +19,8 @@ from leaguelab.newsletter_blocks import (
 from leaguelab.newsletter_layouts import blocks_for, newsletter_type_for_week
 
 
+import re
+
 def _e(value):
     """Escape HTML and encode non-ASCII characters as numeric entities."""
     text = escape(str(value if value is not None else ""))
@@ -30,20 +32,15 @@ def _section(title, body, subtitle=""):
         return ""
     subtitle_html = ""
     if subtitle:
-        subtitle_html = (
-            '<div style="margin:0 0 12px 0;color:#718694;font-size:12px;'
-            'line-height:17px;">{}</div>'
-        ).format(_e(subtitle))
+        subtitle_html = ('<div style="margin:2px 0 14px 0;color:#697781;font-size:11px;line-height:16px;letter-spacing:.2px;">{}</div>').format(_e(subtitle))
     return (
-        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:#fbfdff;'
-        'mso-table-lspace:0pt;mso-table-rspace:0pt;">'
-        '<tr><td align="left" style="padding:22px 28px;border-bottom:1px solid #dce8ef;'
-        'font-family:Arial,Helvetica,sans-serif;color:#263746;text-align:left;">'
-        '<div style="margin:0 0 12px 0;color:#34576e;font-size:19px;'
-        'font-weight:bold;line-height:24px;">{}</div>{}{}</td></tr></table>'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;background:#FFFFFF;">'
+        '<tr><td align="left" style="padding:26px 34px 28px;border-bottom:1px solid #DCE1E4;font-family:Arial,Helvetica,sans-serif;color:#20272C;text-align:left;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;"><tr>'
+        '<td valign="bottom"><div style="margin:0;color:#112B3E;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:22px;font-weight:900;line-height:27px;text-transform:uppercase;letter-spacing:-.3px;">{}</div>'
+        '<div style="width:48px;height:4px;line-height:4px;background:#C58A2A;margin:8px 0 0 0;">&nbsp;</div></td>'
+        '</tr></table>{}{}</td></tr></table>'
     ).format(_e(title), subtitle_html, body)
-
 
 def _table(headers, rows, widths=None, first_row_highlight=False):
     if not rows:
@@ -54,9 +51,9 @@ def _table(headers, rows, widths=None, first_row_highlight=False):
         if widths and idx < len(widths) and widths[idx]:
             width_attr = ' width="{}"'.format(widths[idx])
         headers_html.append(
-            '<th{} align="left" style="padding:8px 7px;background:#eaf3f8;'
-            'border-bottom:2px solid #bfd3df;font-family:Arial,Helvetica,sans-serif;'
-            'font-size:12px;line-height:16px;color:#34576e;text-align:left;">{}</th>'.format(
+            '<th{} align="left" style="padding:8px 7px;background:#E7ECEF;'
+            'border-bottom:2px solid #AEB8BF;font-family:Arial,Helvetica,sans-serif;'
+            'font-size:11px;line-height:16px;color:#112B3E;text-align:left;text-transform:uppercase;letter-spacing:.5px;font-weight:bold;">{}</th>'.format(
                 width_attr, _e(header)
             )
         )
@@ -68,12 +65,14 @@ def _table(headers, rows, widths=None, first_row_highlight=False):
             width_attr = ""
             if widths and idx < len(widths) and widths[idx]:
                 width_attr = ' width="{}"'.format(widths[idx])
-            bg = "background:#f0f7fb;" if first_row_highlight and row_index == 0 else ""
+            bg = "background:#F4EBDD;" if first_row_highlight and row_index == 0 else ""
             weight = "font-weight:bold;" if first_row_highlight and row_index == 0 else ""
+            if idx == 1:
+                weight += "font-weight:bold;"
             cells.append(
                 '<td{} align="left" valign="top" style="padding:8px 7px;'
-                'border-bottom:1px solid #dce8ef;{}{}font-family:Arial,Helvetica,sans-serif;'
-                'font-size:12px;line-height:16px;color:#263746;text-align:left;">{}</td>'.format(
+                'border-bottom:1px solid #D8DEE3;{}{}font-family:Arial,Helvetica,sans-serif;'
+                'font-size:13px;line-height:17px;color:#222A30;text-align:left;">{}</td>'.format(
                     width_attr, bg, weight, value
                 )
             )
@@ -116,31 +115,54 @@ def _card_table(cards, columns=2):
 
 
 def _highlight_card(label, value, detail="", column=0):
-    """Outlook-safe highlight tile using the browser newsletter's 3-column palette."""
-    palettes = (
-        ("#f0f7fb", "#6f98b3"),
-        ("#f2f1fa", "#8d8ab5"),
-        ("#eef8f5", "#78a798"),
-    )
-    background, border = palettes[int(column) % 3]
+    """Equal-height editorial tile where the statistic itself is the visual."""
+    accent = ("#C58A2A", "#112B3E", "#71808A")[int(column) % 3]
+    detail_text = str(detail or "")
+    match = re.match(r"^([+-]?[0-9][0-9,.]*%?)(?:\s+(?:pts?|points?|SOS|wins?))?(?:\s*-\s*(.*)|\s+(vs\s+.*))?$", detail_text, re.I)
+    stat = ""
+    secondary = detail_text
+    if match:
+        stat = match.group(1)
+        secondary = (match.group(2) or match.group(3) or "").strip()
+        if secondary.lower().startswith("vs "):
+            secondary = ""
+    else:
+        lead = re.match(r"^([+-]?[0-9][0-9,.]*%?)\b", detail_text)
+        if lead:
+            stat = lead.group(1)
+            secondary = detail_text[lead.end():].strip(" -")
+    if not stat:
+        stat = {
+            "Biggest Blowout": "MARGIN", "Closest Matchup": "CLOSE",
+            "Biggest Lineup Miss": "MISS", "Challenge": "HOT",
+            "Up Next": "NEXT", "Dues Paid": "PAID", "Outstanding": "DUE",
+        }.get(str(label), "STAT")
+    # Best Lineup is a percentage metric. Keep the % on the large measure and
+    # avoid repeating the metric/unit beneath the team name.
+    if str(label) == "Best Lineup":
+        if stat and not stat.endswith("%"):
+            stat += "%"
+        if secondary.lower() == "efficient":
+            secondary = ""
+    stat_color = "#A66D12" if str(label) == "High Score" else accent
+    secondary_html = ''
+    if secondary:
+        secondary_html = '<div style="margin-top:5px;color:#60717C;font-size:12px;line-height:16px;">{}</div>'.format(_e(secondary))
     return (
-        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:{};'
-        'border-left:3px solid {};">'
-        '<tr><td valign="top" style="padding:12px 13px;font-family:Arial,Helvetica,sans-serif;'
-        'text-align:left;">'
-        '<div style="font-size:9px;line-height:12px;text-transform:uppercase;'
-        'letter-spacing:.5px;color:#6a8191;font-weight:bold;">{}</div>'
-        '<div style="margin-top:5px;font-size:15px;line-height:19px;font-weight:bold;'
-        'color:#263746;">{}</div>'
-        '<div style="margin-top:5px;color:#6b7f8d;font-size:11px;line-height:15px;">{}</div>'
+        '<table role="presentation" width="100%" height="118" cellspacing="0" cellpadding="0" border="0" '
+        'style="width:100%;height:118px;border-collapse:collapse;background:#F7F8F8;border:1px solid #DCE1E4;">'
+        '<tr><td width="78" height="118" align="center" valign="middle" style="width:78px;height:118px;padding:0 7px;background:#F0F2F3;border-right:1px solid #DCE1E4;">'
+        '<div style="font-family:Arial Black,Arial,sans-serif;font-size:21px;line-height:24px;font-weight:900;color:{};letter-spacing:-.4px;">{}</div>'
+        '</td><td height="118" valign="middle" style="height:118px;padding:12px 12px;font-family:Arial,Helvetica,sans-serif;text-align:left;">'
+        '<div style="font-size:12px;line-height:15px;text-transform:uppercase;letter-spacing:.8px;color:#60717C;font-weight:bold;">{}</div>'
+        '<div style="margin-top:5px;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:17px;line-height:21px;font-weight:900;color:#112B3E;">{}</div>'
+        '{}'
         '</td></tr></table>'
-    ).format(background, border, _e(label), _e(value), _e(detail))
-
+    ).format(stat_color, _e(stat), _e(label), _e(value), secondary_html)
 
 def _note(text):
     return (
-        '<div style="margin-top:10px;color:#6c8190;font-family:Arial,Helvetica,sans-serif;'
+        '<div style="margin-top:10px;color:#66727C;font-family:Arial,Helvetica,sans-serif;'
         'font-size:11px;line-height:16px;">{}</div>'
     ).format(_e(text))
 
@@ -148,36 +170,29 @@ def _note(text):
 def _callout(text):
     return (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:#eaf4fa;">'
+        'style="width:100%;border-collapse:collapse;background:#F5F1E8;">'
         '<tr><td style="padding:10px 12px;font-family:Arial,Helvetica,sans-serif;'
-        'font-size:12px;line-height:17px;color:#263746;">{}</td></tr></table>'
+        'font-size:12px;line-height:17px;color:#222A30;">{}</td></tr></table>'
     ).format(_e(text))
 
 
 def _matchup_results(ctx):
     cards = []
+    records = {str(r.get("team_name") or ""): record(r) for r in (ctx.get("weekly_rows") or [])}
     for item in ctx.get("matchups") or []:
+        winner_record = records.get(str(item.get("winner") or ""), "")
+        loser_record = records.get(str(item.get("loser") or ""), "")
         cards.append(
-            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-            'style="width:100%;border-collapse:collapse;border:1px solid #d3e3ed;background:#ffffff;">'
-            '<tr><td style="padding:9px 11px;background:#f0f7fb;border-bottom:1px solid #e5eef3;'
-            'font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:bold;">{}</td>'
-            '<td width="80" align="right" style="padding:9px 11px;background:#f0f7fb;'
-            'border-bottom:1px solid #e5eef3;font-family:Arial,Helvetica,sans-serif;'
-            'font-size:15px;font-weight:bold;">{}</td></tr>'
-            '<tr><td style="padding:9px 11px;border-bottom:1px solid #e5eef3;'
-            'font-family:Arial,Helvetica,sans-serif;font-size:13px;">{}</td>'
-            '<td width="80" align="right" style="padding:9px 11px;border-bottom:1px solid #e5eef3;'
-            'font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;">{}</td></tr>'
-            '<tr><td colspan="2" style="padding:6px 11px;color:#718694;'
-            'font-family:Arial,Helvetica,sans-serif;font-size:10px;text-transform:uppercase;">'
-            'Margin: {} pts</td></tr></table>'.format(
-                _e(item["winner"]), _e(f(item["winner_score"])),
-                _e(item["loser"]), _e(f(item["loser_score"])), _e(f(item["margin"]))
+            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border:1px solid #D9DFE3;background:#ffffff;">'
+            '<tr><td style="padding:10px 12px;background:#F7F8F8;border-bottom:1px solid #E1E5E8;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#112B3E;">{}</td>'
+            '<td width="86" align="center" bgcolor="#F4EBDD" style="padding:10px 8px;background:#F4EBDD;border-bottom:1px solid #E1E5E8;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:17px;font-weight:900;color:#8B5D17;">{}</td></tr>'
+            '<tr><td style="padding:9px 12px;border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:#27333B;">{}</td>'
+            '<td width="86" align="center" style="padding:9px 8px;border-bottom:1px solid #E1E5E8;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#112B3E;">{}</td></tr>'
+            '<tr><td colspan="2" style="padding:7px 12px;color:#667680;background:#FBFBFB;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.8px;text-transform:uppercase;">MARGIN: {} PTS</td></tr></table>'.format(
+                _e(item["winner"] + ("  ·  " + winner_record if winner_record else "")), _e(f(item["winner_score"])), _e(item["loser"] + ("  ·  " + loser_record if loser_record else "")), _e(f(item["loser_score"])), _e(f(item["margin"]))
             )
         )
     return _section("Matchup Results", _card_table(cards, 2))
-
 
 def _weekly_highlights(ctx):
     glance = ctx.get("glance") or {}
@@ -218,6 +233,66 @@ def _weekly_highlights(ctx):
     ]
     cards = [card for row in rows for card in row if card]
     return _section("Weekly Highlights", _card_table(cards, 3))
+
+
+
+def _pulse_stat(label, value, detail, width):
+    return (
+        '<td width="{}" valign="top" style="padding:0 5px;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="width:100%;border-collapse:collapse;background:#FFFFFF;border:1px solid #D8DEE3;">'
+        '<tr><td align="center" style="padding:13px 8px 12px 8px;font-family:Arial,Helvetica,sans-serif;text-align:center;">'
+        '<div style="font-size:10px;line-height:13px;font-weight:bold;letter-spacing:.8px;color:#52606D;text-transform:uppercase;">{}</div>'
+        '<div style="margin-top:5px;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:24px;line-height:28px;font-weight:900;color:#112B3E;">{}</div>'
+        '<div style="margin-top:4px;font-size:10px;line-height:13px;color:#7A858C;">{}</div>'
+        '</td></tr></table></td>'
+    ).format(width, _e(label), _e(value), _e(detail))
+
+
+def _league_pulse(ctx):
+    pulse = ctx.get("league_pulse") or {}
+    if not pulse:
+        return ""
+
+    week = int(num(ctx.get("week"), 0))
+    team_count = int(num(pulse.get("team_count"), 0))
+
+    if week == 1:
+        point_stats = [
+            ("Points This Week", f(pulse.get("week_points")), "All starting lineups"),
+            ("Avg Team Score", f(pulse.get("avg_team_score")), "Across all {} teams".format(team_count or 12)),
+        ]
+        td_stats = [
+            ("TDs This Week", f(pulse.get("week_touchdowns"), 0), "TDs scored by starters"),
+        ]
+    else:
+        point_stats = [
+            ("Points This Week", f(pulse.get("week_points")), "All starting lineups"),
+            ("Points This Season", f(pulse.get("season_points")), "All starters through Week {}".format(week)),
+            ("Points / Week", f(pulse.get("points_per_week")), "League average through Week {}".format(week)),
+            ("Avg Team Score", f(pulse.get("avg_team_score")), "This week across {} teams".format(team_count or 12)),
+        ]
+        td_stats = [
+            ("TDs This Week", f(pulse.get("week_touchdowns"), 0), "TDs scored by starters"),
+            ("TDs This Season", f(pulse.get("season_touchdowns"), 0), "Starter TDs through Week {}".format(week)),
+            ("TDs / Week", f(pulse.get("touchdowns_per_week"), 1), "League average through Week {}".format(week)),
+        ]
+
+    def band(title, stats):
+        width = "{}%".format(int(100 / len(stats)))
+        cells = "".join(_pulse_stat(label, value, detail, width) for label, value, detail in stats)
+        return (
+            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;">'
+            '<tr><td style="padding:0 5px 7px 5px;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;font-weight:900;letter-spacing:1.2px;color:#C58A2A;text-transform:uppercase;">{}</td></tr>'
+            '<tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;"><tr>{}</tr></table></td></tr>'
+            '</table>'
+        ).format(_e(title), cells)
+
+    body = band("Points", point_stats)
+    body += '<div style="height:14px;line-height:14px;">&nbsp;</div>'
+    body += band("Touchdowns", td_stats)
+    return _section("League Pulse", body)
+
 
 def _standings(ctx, final=False):
     rows = [[
@@ -266,27 +341,52 @@ def _challenge_header(data):
     description = data.get("description") or ""
     if description:
         body += (
-            '<div style="margin-top:10px;padding:10px 12px;background:#f7fbfd;'
-            'border-left:3px solid #9bb8ca;font-family:Arial,Helvetica,sans-serif;'
-            'color:#526b7b;font-size:12px;line-height:18px;">{}</div>'
+            '<div style="margin-top:10px;padding:10px 12px;background:#F7F8F8;'
+            'border-left:3px solid #C6923D;font-family:Arial,Helvetica,sans-serif;'
+            'color:#52606D;font-size:12px;line-height:18px;">{}</div>'
         ).format(_e(description))
     return body
 
 
 def _challenge_update(ctx, results=False):
-    return _section("Challenge Results" if results else "Challenge Update",
-                    _challenge_header(ctx.get("challenge_data")))
+    data = ctx.get("challenge_data") or {}
+    if not data:
+        return ""
+    standings = data.get("standings") or []
+    left = (
+        '<table role="presentation" width="100%" height="286" cellspacing="0" cellpadding="0" border="0" '
+        'style="width:100%;height:286px;border-collapse:collapse;background:#F7F8F8;border:1px solid #DCE1E4;">'
+        '<tr><td valign="middle" style="padding:18px 20px;font-family:Arial,Helvetica,sans-serif;">'
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;"><tr>'
+        '<td width="54" valign="top" style="width:54px;padding-right:12px;"><div style="width:46px;height:46px;line-height:46px;text-align:center;background:#F4EBDD;border:1px solid #D7B77A;font-family:Arial Black,Arial,sans-serif;font-size:24px;font-weight:900;color:#A66D12;">&#9678;</div></td>'
+        '<td valign="middle"><div style="font-size:12px;line-height:15px;color:#A66D12;font-weight:bold;letter-spacing:1.2px;text-transform:uppercase;">{} &#8226; ${} PRIZE</div>'
+        '<div style="margin-top:5px;font-family:Arial Black,Arial,sans-serif;font-size:28px;line-height:31px;font-weight:900;color:#112B3E;">{}</div></td>'
+        '</tr></table>'
+        '<div style="margin-top:15px;color:#52606D;font-size:15px;line-height:22px;">{}</div>'
+        '</td></tr></table>'
+    ).format(_e(data.get("weeks", "")), _e(data.get("prize", 10)), _e(data.get("name", "-")), _e(data.get("description", "")))
+    rows = []
+    for row in standings[:12]:
+        rank = row.get("rank", "")
+        bg = "background:#F4EBDD;" if str(rank) == "1" else ""
+        rows.append(
+            '<tr><td width="28" style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#52606D;">{}</td>'
+            '<td style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;color:#112B3E;white-space:nowrap;overflow:hidden;">{}</td>'
+            '<td width="58" align="right" style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;color:#112B3E;">{}</td></tr>'.format(
+                bg, _e(rank), bg, _e(row.get("team_name", "")), bg, _e(row.get("value", ""))
+            )
+        )
+    right = (
+        '<table role="presentation" width="100%" height="286" cellspacing="0" cellpadding="0" border="0" style="width:100%;height:286px;border-collapse:collapse;border:1px solid #DCE1E4;background:#FFFFFF;">'
+        '<tr><td colspan="3" style="padding:8px 8px;background:#E7ECEF;border-bottom:2px solid #AEB8BF;font-family:Arial Black,Arial,sans-serif;font-size:12px;color:#112B3E;text-transform:uppercase;letter-spacing:.5px;">Challenge Standings</td></tr>{}</table>'
+    ).format("".join(rows))
+    body = '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr><td width="44%" valign="top" style="padding:5px;">{}</td><td width="56%" valign="top" style="padding:5px;">{}</td></tr></table>'.format(left, right)
+    return _section("Challenge Results" if results else "Challenge Update", body)
 
 
 def _challenge_standings(ctx):
-    data = ctx.get("challenge_data") or {}
-    rows = [[_e(r.get("rank", "")), _e(r.get("team_name", "")), _e(r.get("value", ""))]
-            for r in data.get("standings", [])]
-    return _section(
-        "Challenge Standings",
-        _table(["Rank", "Team", "Score"], rows, ["12%", "58%", "30%"], first_row_highlight=True)
-    )
-
+    # Current challenge standings are rendered beside Challenge Update.
+    return ""
 
 def _challenge_leaderboard(ctx):
     week = int(ctx.get("week", 0))
@@ -323,9 +423,9 @@ def _next_challenge(ctx):
     )], 1)
     if nxt.get("description"):
         body += (
-            '<div style="margin-top:10px;padding:10px 12px;background:#f7fbfd;'
-            'border-left:3px solid #9bb8ca;font-family:Arial,Helvetica,sans-serif;'
-            'color:#526b7b;font-size:12px;line-height:18px;">{}</div>'
+            '<div style="margin-top:10px;padding:10px 12px;background:#F7F8F8;'
+            'border-left:3px solid #C6923D;font-family:Arial,Helvetica,sans-serif;'
+            'color:#52606D;font-size:12px;line-height:18px;">{}</div>'
         ).format(_e(nxt["description"]))
     return _section("Next Challenge", body)
 
@@ -341,7 +441,7 @@ def _beyond_box_score(ctx, season=False):
         if projected_rows:
             best = max(projected_rows, key=lambda r: num(r.get("points")) - num(r.get("projected_points")))
             delta = num(best.get("points")) - num(best.get("projected_points"))
-            cards.append(_highlight_card("This Week - Overachiever", best.get("team_name", "-"), "{:+.2f} vs projection".format(delta), 0))
+            cards.append(_highlight_card("This Week - Overachiever", best.get("team_name", "-"), "{:+.2f} points over projected".format(delta), 0))
         else:
             current_week = int(ctx.get("week", 0))
             prior_by_team = {}
@@ -366,8 +466,8 @@ def _beyond_box_score(ctx, season=False):
 
         lucky = max(weekly_rows, key=weekly_luck)
         unlucky = min(weekly_rows, key=weekly_luck)
-        cards.append(_highlight_card("This Week - Luckiest", lucky.get("team_name", "-"), "{:+.2f} win luck".format(weekly_luck(lucky)), 0))
-        cards.append(_highlight_card("This Week - Unluckiest", unlucky.get("team_name", "-"), "{:+.2f} win luck".format(weekly_luck(unlucky)), 0))
+        cards.append(_highlight_card("This Week - Luckiest", lucky.get("team_name", "-"), "{:+.2f} wins vs expected".format(weekly_luck(lucky)), 0))
+        cards.append(_highlight_card("This Week - Unluckiest", unlucky.get("team_name", "-"), "{:+.2f} wins vs expected".format(weekly_luck(unlucky)), 0))
 
     current = ctx.get("weekly_rows") or []
     if current:
@@ -385,16 +485,6 @@ def _beyond_box_score(ctx, season=False):
         cards.append(_highlight_card("Season - Weakest SOS", sos[-1].get("team_name", "-"), "{} SOS - {} opp avg".format(pct(sos[-1].get("strength_of_schedule")), f(sos[-1].get("avg_opponent_score"))), 2))
 
     title = "Beyond the Box Score - Season Edition" if season else "Beyond the Box Score"
-    if not season:
-        blue = [c for c in cards if "#f0f7fb" in c]
-        lavender = [c for c in cards if "#f2f1fa" in c]
-        green = [c for c in cards if "#eef8f5" in c]
-        ordered = []
-        for i in range(max(len(blue), len(lavender), len(green))):
-            for column_cards in (blue, lavender, green):
-                if i < len(column_cards):
-                    ordered.append(column_cards[i])
-        cards = ordered
     body = _card_table(cards, 3)
     if body:
         body += _note("Weekly luck compares the matchup result with that week's all-play expectation. Season luck and SOS are through this newsletter week.")
@@ -407,40 +497,54 @@ def _upcoming_matchups(ctx, title="Next Week's Matchups"):
     cards = []
     for index, item in enumerate(matchups):
         a, b = item["team_a"], item["team_b"]
+        featured = index == data.get("matchup_to_watch")
         badge = ""
-        if index == data.get("matchup_to_watch"):
-            badge = (
-                '<div style="margin:0 0 7px 0;">'
-                '<span style="display:inline-block;padding:3px 6px;background:#dcecf5;'
-                'color:#456b83;border-radius:10px;font-family:Arial,Helvetica,sans-serif;'
-                'font-size:9px;line-height:11px;font-weight:bold;text-transform:uppercase;'
-                'white-space:nowrap;">MATCHUP TO WATCH</span></div>'
-            )
-
+        if featured:
+            badge = '<div style="display:inline-block;margin:0 0 9px 0;padding:5px 9px;background:#C58A2A;color:#FFFFFF;font-family:Arial Black,Arial,sans-serif;font-size:11px;line-height:13px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;">MATCHUP TO WATCH</div>'
         def team_line(team):
             rank = "#{}".format(team["power_rank"]) if team.get("power_rank") else "#-"
             projection = ""
             if team.get("projected_points") is not None and num(team.get("projected_points")) > 0:
-                projection = ' <span style="color:#6f98b3;font-size:11px;">- Proj {}</span>'.format(
-                    _e(f(team.get("projected_points")))
-                )
-            return "<strong>{} {}</strong> <span style='color:#6c8190;'>({})</span>{}".format(
-                _e(rank), _e(team.get("team_name", "-")), _e(team.get("record", "")), projection
-            )
-
+                projection = '<div style="margin-top:3px;color:#A66D12;font-size:14px;line-height:17px;">Proj {}</div>'.format(_e(f(team.get("projected_points"))))
+            return '<div style="font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:15px;line-height:19px;font-weight:900;color:#112B3E;">{} {}</div><div style="margin-top:2px;color:#66727C;font-size:14px;line-height:17px;">{}</div>{}'.format(_e(rank), _e(team.get("team_name", "-")), _e(team.get("record", "")), projection)
+        bg = "#FBF5E9" if featured else "#F7F8F8"
+        border = "2px solid #C58A2A" if featured else "1px solid #D8DEE3"
         cards.append(
-            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-            'style="width:100%;border-collapse:collapse;background:#f4f9fc;border:1px solid #d3e3ed;">'
-            '<tr><td style="padding:12px 13px;font-family:Arial,Helvetica,sans-serif;'
-            'font-size:13px;line-height:18px;color:#263746;">{}{}'
-            '<div style="padding:4px 0;color:#7d909c;font-size:10px;text-transform:uppercase;">vs</div>'
-            '{}</td></tr></table>'.format(badge, team_line(a), team_line(b))
+            '<table role="presentation" width="100%" height="174" cellspacing="0" cellpadding="0" border="0" style="width:100%;height:174px;border-collapse:collapse;background:{};border:{};">'
+            '<tr><td height="174" valign="middle" style="height:174px;padding:15px 16px;font-family:Arial,Helvetica,sans-serif;color:#222A30;">{}{}'
+            '<div style="padding:6px 0;color:#71808A;font-size:12px;line-height:14px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;">vs</div>{}</td></tr></table>'.format(bg, border, badge, team_line(a), team_line(b))
         )
     subtitle = "Week {} - Rank shown is LeagueLab Power Ranking".format(data.get("week", ""))
     return _section(title, _card_table(cards, 2), subtitle)
 
+def _from_commish(ctx):
+    """Render commissioner notes as an opening editorial callout."""
+    data = ctx.get("admin_data") or {}
+    notes = data.get("notes") or data.get("items") or []
+    if isinstance(notes, str):
+        notes = [notes]
+    notes = [str(item).strip() for item in notes if str(item).strip()]
+    if not notes:
+        return ""
+
+    paragraphs = "".join(
+        '<div style="margin:{};">{}</div>'.format(
+            "0" if index == 0 else "10px 0 0 0",
+            _e(item),
+        )
+        for index, item in enumerate(notes)
+    )
+    body = (
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="width:100%;border-collapse:collapse;background:#F7F3EB;border-left:4px solid #C58A2A;">'
+        '<tr><td style="padding:16px 18px;font-family:Arial,Helvetica,sans-serif;color:#252A2E;'
+        'font-size:15px;line-height:23px;">{}</td></tr></table>'.format(paragraphs)
+    )
+    return _section("From the Commissioner's Desk", body)
+
 
 def _league_admin(ctx):
+    """Render bottom-of-newsletter housekeeping only; commissioner notes live at the top."""
     data = ctx.get("admin_data") or {}
     if not data:
         return ""
@@ -461,16 +565,14 @@ def _league_admin(ctx):
                 bubbles.append(
                     '<td valign="top" style="padding:3px 4px 3px 0;">'
                     '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
-                    'style="border-collapse:separate;background:#f2f1fa;border:1px solid #d8d5e8;'
-                    'border-radius:16px;"><tr><td style="padding:6px 10px;'
-                    'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;'
-                    'color:#263746;white-space:nowrap;">{} &#8212; ${:.0f}</td></tr></table></td>'.format(
+                    'style="border-collapse:separate;background:#F7F8F8;border:1px solid #D8DEE3;'
+                    'border-radius:16px;"><tr><td style="padding:8px 12px;'
+                    'font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:19px;'
+                    'color:#222A30;white-space:nowrap;">{} &#8212; ${:.0f}</td></tr></table></td>'.format(
                         _e(x.get("team_name", "")),
                         num(x.get("balance_due", x.get("balance", 0))),
                     )
                 )
-            # Four bubbles per row matches the browser newsletter while
-            # remaining email-safe without relying on flexbox.
             bubble_rows = []
             for i in range(0, len(bubbles), 4):
                 cells = bubbles[i:i + 4]
@@ -486,18 +588,6 @@ def _league_admin(ctx):
         elif dues.get("unpaid_count", 0) == 0:
             pieces.append('<div style="margin-top:10px;">{}</div>'.format(_callout("All league dues are paid.")))
 
-    notes = data.get("notes") or data.get("items") or []
-    if isinstance(notes, str):
-        notes = [notes]
-    if notes:
-        items = "".join(
-            '<li style="margin-bottom:4px;">{}</li>'.format(_e(item)) for item in notes
-        )
-        pieces.append(
-            '<div style="margin-top:14px;font-size:14px;font-weight:bold;color:#45677d;">Commissioner Notes</div>'
-            '<ul style="margin:8px 0 0 20px;padding:0;font-family:Arial,Helvetica,sans-serif;'
-            'font-size:13px;line-height:20px;color:#263746;">{}</ul>'.format(items)
-        )
     return _section("League Admin", "".join(pieces))
 
 
@@ -553,11 +643,11 @@ def _next_round_cards(ctx):
 
         cards.append(
             '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-            'style="width:100%;border-collapse:collapse;background:#f4f9fc;border:1px solid #d3e3ed;">'
+            'style="width:100%;border-collapse:collapse;background:#F7F8F8;border:1px solid #D8DEE3;">'
             '<tr><td style="padding:12px 13px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;">'
-            '<div style="margin-bottom:5px;color:#4f7f9d;font-size:8px;font-weight:bold;'
+            '<div style="margin-bottom:5px;color:#C6923D;font-size:8px;font-weight:bold;'
             'text-transform:uppercase;">{}</div><strong>{}</strong>'
-            '<div style="padding:4px 0;color:#7d909c;font-size:10px;text-transform:uppercase;">vs</div>'
+            '<div style="padding:4px 0;color:#66727C;font-size:10px;text-transform:uppercase;">vs</div>'
             '<strong>{}</strong></td></tr></table>'.format(_e(label), _e(line(a)), _e(line(b)))
         )
     return _section(
@@ -570,20 +660,20 @@ def _bracket_matchup_card(item, label):
     def team_row(team, winner_key):
         if not team:
             return (
-                '<tr><td colspan="3" style="padding:8px;background:#ffffff;color:#9aabb5;'
+                '<tr><td colspan="3" style="padding:8px;background:#ffffff;color:#8B969E;'
                 'font-family:Arial,Helvetica,sans-serif;font-size:11px;font-style:italic;">TBD</td></tr>'
             )
         winner = winner_key and str(team.get("team_key") or "") == str(winner_key)
         complete = bool(winner_key)
-        bg = "#e8f3f8" if winner else "#ffffff"
+        bg = "#F5F1E8" if winner else "#ffffff"
         weight = "font-weight:bold;" if winner else ""
-        deco = "text-decoration:line-through;color:#8a9ba6;" if complete and not winner else ""
+        deco = "text-decoration:line-through;color:#7A858D;" if complete and not winner else ""
         score = team.get("score")
         proj = team.get("projected_points")
         value = f(score) if score is not None else ("Proj {}".format(f(proj)) if proj is not None and num(proj) > 0 else "")
         return (
             '<tr><td width="34" style="padding:8px;background:{};font-family:Arial,Helvetica,sans-serif;'
-            'font-size:10px;color:#7c919f;{}">#{}</td>'
+            'font-size:10px;color:#66727C;{}">#{}</td>'
             '<td style="padding:8px;background:{};font-family:Arial,Helvetica,sans-serif;'
             'font-size:11px;{}{}">{}</td>'
             '<td width="70" align="right" style="padding:8px;background:{};'
@@ -596,8 +686,8 @@ def _bracket_matchup_card(item, label):
     winner_key = (item or {}).get("winner_key")
     return (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;border:1px solid #cbdde7;background:#ffffff;">'
-        '<tr><td colspan="3" align="center" style="padding:6px 8px;background:#263746;color:#ffffff;'
+        'style="width:100%;border-collapse:collapse;border:1px solid #D8DEE3;background:#ffffff;">'
+        '<tr><td colspan="3" align="center" style="padding:6px 8px;background:#222A30;color:#ffffff;'
         'font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:bold;'
         'text-transform:uppercase;">{}</td></tr>{}{}</table>'
     ).format(
@@ -672,9 +762,9 @@ def _playoff_bracket(ctx, title, preview=False):
 
     source_note = (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;border:1px dashed #c8d8e2;">'
+        'style="width:100%;border-collapse:collapse;border:1px dashed #C9D0D5;">'
         '<tr><td align="center" style="padding:12px;font-family:Arial,Helvetica,sans-serif;'
-        'font-size:11px;line-height:15px;color:#7b909e;">Quarterfinal losers</td></tr>'
+        'font-size:11px;line-height:15px;color:#66727C;">Quarterfinal losers</td></tr>'
         '</table>'
     )
 
@@ -698,11 +788,11 @@ def _playoff_bracket(ctx, title, preview=False):
     )
 
     body = (
-        '<div style="margin-bottom:8px;color:#45677d;font-family:Arial,Helvetica,sans-serif;'
+        '<div style="margin-bottom:8px;color:#142B3D;font-family:Arial,Helvetica,sans-serif;'
         'font-size:13px;line-height:16px;font-weight:bold;text-transform:uppercase;'
         'letter-spacing:.6px;">Championship Bracket</div>'
         + championship
-        + '<div style="margin:22px 0 8px;color:#45677d;font-family:Arial,Helvetica,sans-serif;'
+        + '<div style="margin:22px 0 8px;color:#142B3D;font-family:Arial,Helvetica,sans-serif;'
           'font-size:13px;line-height:16px;font-weight:bold;text-transform:uppercase;'
           'letter-spacing:.6px;">Consolation / Placement Bracket</div>'
         + consolation_html
@@ -756,7 +846,7 @@ def _toilet_bowl(ctx, title, preview=False):
 
     # Two semifinal rows feeding a vertically centered Final.
     body = (
-        '<div style="margin-bottom:8px;color:#45677d;font-family:Arial,Helvetica,sans-serif;'
+        '<div style="margin-bottom:8px;color:#142B3D;font-family:Arial,Helvetica,sans-serif;'
         'font-size:13px;line-height:16px;font-weight:bold;text-transform:uppercase;'
         'letter-spacing:.6px;">Toilet Bowl</div>'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
@@ -780,12 +870,12 @@ def _champion(ctx):
         return ""
     body = (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:#e8f3f8;border:1px solid #bdd4e1;">'
+        'style="width:100%;border-collapse:collapse;background:#F5F1E8;border:1px solid #D8C49C;">'
         '<tr><td align="center" style="padding:18px 20px;font-family:Arial,Helvetica,sans-serif;">'
         '<div style="font-size:52px;line-height:56px;margin-bottom:8px;">&#127942;</div>'
         '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;'
-        'color:#5d7889;font-weight:bold;">League Champion</div>'
-        '<div style="margin-top:5px;font-size:22px;font-weight:bold;color:#294b60;">#{} {}</div>'
+        'color:#66727C;font-weight:bold;">League Champion</div>'
+        '<div style="margin-top:5px;font-size:22px;font-weight:bold;color:#142B3D;">#{} {}</div>'
         '</td></tr></table>'
     ).format(_e(champion.get("seed", "-")), _e(champion.get("team_name", "-")))
     return _section("League Champion", body)
@@ -797,13 +887,13 @@ def _toilet_bowl_winner(ctx):
         return ""
     body = (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:#e8f3f8;border:1px solid #bdd4e1;">'
+        'style="width:100%;border-collapse:collapse;background:#F5F1E8;border:1px solid #D8C49C;">'
         '<tr><td align="center" style="padding:18px 20px;font-family:Arial,Helvetica,sans-serif;">'
         '<div style="font-size:52px;line-height:56px;margin-bottom:8px;">&#128701;</div>'
         '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;'
-        'color:#5d7889;font-weight:bold;">Toilet Bowl Champion</div>'
-        '<div style="margin-top:5px;font-size:22px;font-weight:bold;color:#294b60;">#{} {}</div>'
-        '<div style="margin-top:5px;color:#647e8e;font-size:12px;">${:.0f} payout</div>'
+        'color:#66727C;font-weight:bold;">Toilet Bowl Champion</div>'
+        '<div style="margin-top:5px;font-size:22px;font-weight:bold;color:#142B3D;">#{} {}</div>'
+        '<div style="margin-top:5px;color:#66727C;font-size:12px;">${:.0f} payout</div>'
         '</td></tr></table>'
     ).format(_e(champion.get("seed", "-")), _e(champion.get("team_name", "-")), num(champion.get("payout")))
     return _section("Toilet Bowl Champion", body)
@@ -928,9 +1018,9 @@ def _season_accolades(ctx):
         winner = _e(award.get("winner", "-"))
         detail = _e(award.get("detail", ""))
         palettes = (
-            ("#f0f7fb", "#6f98b3"),
-            ("#f2f1fa", "#8d8ab5"),
-            ("#eef8f5", "#78a798"),
+            ("#F7F8F8", "#C6923D"),
+            ("#F7F8F8", "#142B3D"),
+            ("#F7F8F8", "#6F7C85"),
         )
         background, border = palettes[index % 3]
         cards.append(
@@ -939,10 +1029,10 @@ def _season_accolades(ctx):
             '<tr><td valign="top" style="padding:14px 15px;font-family:Arial,Helvetica,sans-serif;">'
             '<div style="font-size:24px;line-height:28px;">{}</div>'
             '<div style="margin-top:7px;font-size:10px;line-height:13px;text-transform:uppercase;'
-            'letter-spacing:.7px;color:#6a8191;font-weight:bold;">{}</div>'
+            'letter-spacing:.7px;color:#66727C;font-weight:bold;">{}</div>'
             '<div style="margin-top:6px;font-size:16px;line-height:20px;font-weight:bold;'
-            'color:#34576e;">{}</div>'
-            '<div style="margin-top:5px;color:#6b7f8d;font-size:12px;line-height:16px;">{}</div>'
+            'color:#142B3D;">{}</div>'
+            '<div style="margin-top:5px;color:#66727C;font-size:12px;line-height:16px;">{}</div>'
             '</td></tr></table>'.format(background, border, icon, title, winner, detail)
         )
     return _section("Season Accolades", _card_table(cards, 3))
@@ -1031,6 +1121,7 @@ def build_weekly_email_html(
         "glance": glance,
         "matchups": build_matchups(glance),
         "lineup_summary": analytics_result.get("lineup_summary") or {},
+        "league_pulse": analytics_result.get("league_pulse") or {},
         "weekly_rows": weekly,
         "all_weekly_rows": analytics_result.get("weekly_analytics", []),
         "power": sorted(
@@ -1064,7 +1155,14 @@ def build_weekly_email_html(
         "postseason_wrap": "Season Wrap-Up",
     }
 
-    content = "".join(_render(name, ctx) for name in blocks_for(ntype))
+    # Open with the commissioner message immediately below the newsletter header.
+    # League Admin remains at the bottom for dues/housekeeping and does not repeat notes.
+    content_parts = [_from_commish(ctx)]
+    for name in blocks_for(ntype):
+        content_parts.append(_render(name, ctx))
+        if name == "weekly_highlights":
+            content_parts.append(_league_pulse(ctx))
+    content = "".join(content_parts)
 
     # Keep the same 900px canvas that proved reliable in the preseason email.
     return (
@@ -1072,23 +1170,30 @@ def build_weekly_email_html(
         '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>LeagueLab Week {}</title></head>'
-        '<body style="margin:0;padding:0;background:#edf4f8;">'
+        '<body style="margin:0;padding:0;background:#F1F3F4;">'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'bgcolor="#edf4f8" style="width:100%;border-collapse:collapse;'
+        'bgcolor="#F1F3F4" style="width:100%;border-collapse:collapse;'
         'mso-table-lspace:0pt;mso-table-rspace:0pt;">'
         '<tr><td align="center" valign="top" style="padding:0;">'
         '<table role="presentation" width="900" cellspacing="0" cellpadding="0" border="0" '
-        'align="center" style="width:900px;border-collapse:collapse;background:#fbfdff;'
+        'align="center" style="width:900px;border-collapse:collapse;background:#FFFFFF;'
         'mso-table-lspace:0pt;mso-table-rspace:0pt;">'
-        '<tr><td align="left" bgcolor="#567b95" style="padding:30px 28px;'
-        'font-family:Arial,Helvetica,sans-serif;color:#ffffff;text-align:left;">'
-        '<div style="margin:0;font-size:28px;line-height:34px;font-weight:bold;">{}</div>'
-        '<div style="margin-top:7px;color:#e6eef3;font-size:13px;line-height:18px;">'
-        'LeagueLab &#8226; {} &#8226; Week {} &#8226; {}</div></td></tr>'
+        '<tr><td align="left" bgcolor="#112B3E" style="padding:0;background:#112B3E;font-family:Arial,Helvetica,sans-serif;color:#ffffff;text-align:left;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;"><tr>'
+        '<td valign="middle" style="padding:27px 30px 28px 30px;">'
+        '<div style="margin:0 0 6px;color:#D59A35;font-size:11px;line-height:14px;font-weight:bold;letter-spacing:2.5px;">LEAGUELAB</div>'
+        '<div style="margin:0;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:32px;line-height:37px;font-weight:900;letter-spacing:-.6px;">{}</div>'
+        '<div style="margin-top:7px;color:#E0B15E;font-family:Georgia,Times New Roman,serif;font-size:14px;line-height:19px;font-style:italic;font-weight:bold;">If you ain&#39;t first, you&#39;re last...</div>'
+        '<div style="margin-top:9px;color:#D7DEE2;font-size:11px;line-height:17px;letter-spacing:1.2px;text-transform:uppercase;">{} &#8226; WEEK {} &#8226; {}</div></td>'
+        '<td width="150" align="center" valign="middle" style="width:150px;padding:18px 24px;border-left:2px solid #C58A2A;">'
+        '<div style="font-size:9px;line-height:12px;letter-spacing:2px;color:#D7DEE2;text-transform:uppercase;">WEEK</div>'
+        '<div style="font-family:Arial Black,Arial,sans-serif;font-size:46px;line-height:48px;font-weight:900;color:#FFFFFF;">{}</div>'
+        '<div style="margin-top:3px;font-size:9px;line-height:12px;letter-spacing:1.4px;color:#D59A35;text-transform:uppercase;">XTREME FOOTBALL</div>'
+        '</td></tr></table></td></tr>'
         '<tr><td align="left" style="padding:0;text-align:left;">{}</td></tr>'
         '<tr><td align="center" style="padding:20px 28px;font-family:Arial,Helvetica,sans-serif;'
-        'text-align:center;color:#8a9ba6;font-size:10px;">Generated by LeagueLab</td></tr>'
+        'text-align:center;color:#66727C;font-size:10px;letter-spacing:.5px;">XTREME FOOTBALL &#8226; Generated by LeagueLab</td></tr>'
         '</table></td></tr></table></body></html>'
     ).format(
-        _e(week), _e(league_name), _e(season), _e(week), _e(labels[ntype]), content
+        _e(week), _e(league_name), _e(season), _e(week), _e(labels[ntype]), _e(week), content
     )
