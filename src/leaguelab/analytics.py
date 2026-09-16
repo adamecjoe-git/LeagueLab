@@ -1003,6 +1003,36 @@ def build_lineup_efficiency_rows(
             for row in starters
         )
 
+        # Bench depth is intentionally different from points_left_on_bench.
+        # This is the total production from players actually left on BN.
+        bench_players = [
+            row for row in players
+            if str(row.get("selected_position") or "").strip().upper() == "BN"
+        ]
+        bench_points = sum(
+            to_float(row.get("points"))
+            for row in bench_players
+        )
+
+        # Highest Floor must use the actual Yahoo lineup slots captured for
+        # this team/week.  lineup_slot is assigned from selected_position by
+        # the normalizer (QB1, RB1, WR2, FLEX1, etc.); BN/IR slots therefore
+        # cannot enter this metric.  Keep selected_position as a second guard.
+        starter_slot_prefixes = ("QB", "RB", "WR", "TE", "FLEX", "DEF", "K")
+        floor_starters = [
+            row for row in players
+            if str(row.get("lineup_slot") or "").strip().upper().startswith(starter_slot_prefixes)
+            and str(row.get("selected_position") or "").strip().upper()
+            not in {"", "BN", "IR", "IL", "NA"}
+        ]
+        lowest_starter = min(
+            floor_starters,
+            key=lambda row: (
+                to_float(row.get("points")),
+                str(row.get("player_name") or "").lower(),
+            ),
+        ) if floor_starters else None
+
         optimal = solve_optimal_lineup(
             players
         )
@@ -1054,6 +1084,20 @@ def build_lineup_efficiency_rows(
                 "points_left_on_bench": round(
                     points_left,
                     2,
+                ),
+                "bench_points": round(
+                    bench_points,
+                    2,
+                ),
+                "lowest_starter_name": (
+                    lowest_starter.get("player_name", "")
+                    if lowest_starter
+                    else ""
+                ),
+                "lowest_starter_points": (
+                    round(to_float(lowest_starter.get("points")), 2)
+                    if lowest_starter
+                    else 0.0
                 ),
                 "lineup_efficiency": round(
                     efficiency,
@@ -1134,33 +1178,34 @@ def build_weekly_lineup_summary(
         ),
     )
 
-    most_left = max(
+    most_bench_points = max(
         rows,
         key=lambda row: (
-            row["points_left_on_bench"],
-            -row["lineup_efficiency"],
+            to_float(row.get("bench_points")),
+            row["team_name"].lower(),
+        ),
+    )
+
+    deepest_lineup = max(
+        rows,
+        key=lambda row: (
+            to_float(row.get("lowest_starter_points")),
+            row["team_name"].lower(),
         ),
     )
 
     valid_decisions = [
         row
         for row in rows
-        if to_float(
-            row["decision_points_gained"]
-        ) > 0
+        if to_float(row["decision_points_gained"]) > 0
     ]
 
     worst_decision = None
-
     if valid_decisions:
         worst_decision = max(
             valid_decisions,
             key=lambda row: (
-                to_float(
-                    row[
-                        "decision_points_gained"
-                    ]
-                ),
+                to_float(row["decision_points_gained"]),
                 row["team_name"].lower(),
             ),
         )
@@ -1169,11 +1214,12 @@ def build_weekly_lineup_summary(
         "week": int(week),
         "best_efficiency": best_efficiency,
         "worst_efficiency": worst_efficiency,
-        "most_points_left": most_left,
+        "most_bench_points": most_bench_points,
+        "deepest_lineup": deepest_lineup,
         "worst_decision": worst_decision,
+        # Compatibility alias for any older renderer still reading this key.
+        "most_points_left": most_bench_points,
     }
-
-
 
 def percentile_scores(
     values_by_team,
@@ -2070,6 +2116,9 @@ def run_weekly_analytics(season, end_week=14):
             "actual_lineup_points",
             "optimal_lineup_points",
             "points_left_on_bench",
+            "bench_points",
+            "lowest_starter_name",
+            "lowest_starter_points",
             "lineup_efficiency",
             "biggest_bench_player",
             "biggest_bench_points",

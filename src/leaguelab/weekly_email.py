@@ -42,7 +42,7 @@ def _section(title, body, subtitle=""):
         '</tr></table>{}{}</td></tr></table>'
     ).format(_e(title), subtitle_html, body)
 
-def _table(headers, rows, widths=None, first_row_highlight=False):
+def _table(headers, rows, widths=None, first_row_highlight=False, alignments=None):
     if not rows:
         return ""
     headers_html = []
@@ -50,11 +50,12 @@ def _table(headers, rows, widths=None, first_row_highlight=False):
         width_attr = ""
         if widths and idx < len(widths) and widths[idx]:
             width_attr = ' width="{}"'.format(widths[idx])
+        align = alignments[idx] if alignments and idx < len(alignments) else "left"
         headers_html.append(
-            '<th{} align="left" style="padding:8px 7px;background:#E7ECEF;'
+            '<th{} align="{}" style="padding:8px 7px;background:#E7ECEF;'
             'border-bottom:2px solid #AEB8BF;font-family:Arial,Helvetica,sans-serif;'
-            'font-size:11px;line-height:16px;color:#112B3E;text-align:left;text-transform:uppercase;letter-spacing:.5px;font-weight:bold;">{}</th>'.format(
-                width_attr, _e(header)
+            'font-size:11px;line-height:16px;color:#112B3E;text-align:{};text-transform:uppercase;letter-spacing:.5px;font-weight:bold;">{}</th>'.format(
+                width_attr, align, align, _e(header)
             )
         )
 
@@ -69,11 +70,12 @@ def _table(headers, rows, widths=None, first_row_highlight=False):
             weight = "font-weight:bold;" if first_row_highlight and row_index == 0 else ""
             if idx == 1:
                 weight += "font-weight:bold;"
+            align = alignments[idx] if alignments and idx < len(alignments) else "left"
             cells.append(
-                '<td{} align="left" valign="top" style="padding:8px 7px;'
+                '<td{} align="{}" valign="top" style="padding:8px 7px;'
                 'border-bottom:1px solid #D8DEE3;{}{}font-family:Arial,Helvetica,sans-serif;'
-                'font-size:13px;line-height:17px;color:#222A30;text-align:left;">{}</td>'.format(
-                    width_attr, bg, weight, value
+                'font-size:13px;line-height:17px;color:#222A30;text-align:{};">{}</td>'.format(
+                    width_attr, align, bg, weight, align, value
                 )
             )
         body_html.append("<tr>{}</tr>".format("".join(cells)))
@@ -137,9 +139,9 @@ def _highlight_card(label, value, detail="", column=0):
             "Biggest Lineup Miss": "MISS", "Challenge": "HOT",
             "Up Next": "NEXT", "Dues Paid": "PAID", "Outstanding": "DUE",
         }.get(str(label), "STAT")
-    # Best Lineup is a percentage metric. Keep the % on the large measure and
-    # avoid repeating the metric/unit beneath the team name.
-    if str(label) == "Best Lineup":
+    # Lineup efficiency cards are percentage metrics. Keep the % on the
+    # large measure and do not repeat "efficient" beneath the team name.
+    if str(label) in {"Most Efficient Lineup", "Least Efficient Lineup"}:
         if stat and not stat.endswith("%"):
             stat += "%"
         if secondary.lower() == "efficient":
@@ -178,63 +180,182 @@ def _callout(text):
 
 def _matchup_results(ctx):
     cards = []
-    records = {str(r.get("team_name") or ""): record(r) for r in (ctx.get("weekly_rows") or [])}
-    for item in ctx.get("matchups") or []:
-        winner_record = records.get(str(item.get("winner") or ""), "")
-        loser_record = records.get(str(item.get("loser") or ""), "")
+    weekly = ctx.get("weekly_rows") or []
+    weekly_by_name = {str(r.get("team_name") or ""): r for r in weekly}
+    ap_by_name = {str(r.get("team_name") or ""): r for r in (ctx.get("all_play_week") or [])}
+    matchups = ctx.get("matchups") or []
+    glance = ctx.get("glance") or {}
+
+    high_name = str((glance.get("highest_team_score") or {}).get("team_name") or "")
+    low_name = str((glance.get("lowest_team_score") or {}).get("team_name") or "")
+    close = min(matchups, key=lambda x: num(x.get("margin"))) if matchups else None
+    blow = max(matchups, key=lambda x: num(x.get("margin"))) if matchups else None
+
+    # Biggest Upset: actual winner was a Yahoo-projected underdog.
+    upset = None
+    upset_gap = 0.0
+    for item in matchups:
+        winner_row = weekly_by_name.get(str(item.get("winner") or ""), {})
+        loser_row = weekly_by_name.get(str(item.get("loser") or ""), {})
+        winner_proj = num(winner_row.get("projected_points"))
+        loser_proj = num(loser_row.get("projected_points"))
+        if winner_proj > 0 and loser_proj > 0 and winner_proj < loser_proj:
+            gap = loser_proj - winner_proj
+            if gap > upset_gap:
+                upset_gap = gap
+                upset = item
+
+    def wlt(row, prefix="actual"):
+        if not row:
+            return "0–0–0"
+        return "{}–{}–{}".format(
+            int(num(row.get(prefix + "_wins"))),
+            int(num(row.get(prefix + "_losses"))),
+            int(num(row.get(prefix + "_ties"))),
+        )
+
+    def ordinal(value):
+        n = int(num(value))
+        if 10 <= (n % 100) <= 20:
+            suffix = "TH"
+        else:
+            suffix = {1: "ST", 2: "ND", 3: "RD"}.get(n % 10, "TH")
+        return "{}{}".format(n, suffix) if n else ""
+
+    def all_play_text(name):
+        row = ap_by_name.get(str(name), {})
+        return wlt(row, "all_play") if row else ""
+
+    def all_play_rank(name):
+        row = ap_by_name.get(str(name), {})
+        return ordinal(row.get("weekly_rank")) if row else ""
+
+    def team_badges(item, name):
+        labels = []
+        if name == high_name:
+            labels.append("HIGH SCORE")
+        if name == low_name:
+            labels.append("LOW SCORE")
+        if item is upset and name == str(item.get("winner") or ""):
+            labels.append("BIGGEST UPSET")
+        return labels
+
+    def matchup_badges(item):
+        labels = []
+        if item is close:
+            labels.append("CLOSEST MATCHUP")
+        if item is blow:
+            labels.append("BIGGEST BLOWOUT")
+        return labels
+
+    def badge_html(labels, matchup=False):
+        if not labels:
+            return "&nbsp;"
+        return " ".join(
+            '<span style="display:inline-block;margin-left:4px;padding:2px 5px;background:#C58A2A;border:1px solid #FFFFFF;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;font-size:8px;line-height:11px;font-weight:bold;letter-spacing:.3px;white-space:nowrap;">{}</span>'.format(_e(label))
+            for label in labels
+        )
+
+    def team_html(name):
+        row = weekly_by_name.get(str(name), {})
+        ap_record = all_play_text(name)
+        ap_rank = all_play_rank(name)
+        ap_detail = "{} · {}".format(ap_record, ap_rank) if ap_rank else ap_record
+        return (
+            '<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:19px;font-weight:800;color:#112B3E;white-space:nowrap;">{}'
+            '<span style="font-size:13px;font-weight:700;color:#112B3E;"> &middot; {}</span></div>'
+            '<div style="margin-top:9px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:13px;font-weight:700;color:#667680;white-space:nowrap;text-transform:uppercase;">ALL PLAY&nbsp;&nbsp;{}</div>'
+        ).format(_e(name), _e(wlt(row)), _e(ap_detail))
+
+    for item in matchups:
+        winner = str(item.get("winner") or "")
+        loser = str(item.get("loser") or "")
+        winner_badges = team_badges(item, winner)
+        loser_badges = team_badges(item, loser)
+        matchup_labels = matchup_badges(item)
         cards.append(
-            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border:1px solid #D9DFE3;background:#ffffff;">'
-            '<tr><td style="padding:10px 12px;background:#F7F8F8;border-bottom:1px solid #E1E5E8;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#112B3E;">{}</td>'
-            '<td width="86" align="center" bgcolor="#F4EBDD" style="padding:10px 8px;background:#F4EBDD;border-bottom:1px solid #E1E5E8;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:17px;font-weight:900;color:#8B5D17;">{}</td></tr>'
-            '<tr><td style="padding:9px 12px;border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:#27333B;">{}</td>'
-            '<td width="86" align="center" style="padding:9px 8px;border-bottom:1px solid #E1E5E8;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#112B3E;">{}</td></tr>'
-            '<tr><td colspan="2" style="padding:7px 12px;color:#667680;background:#FBFBFB;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.8px;text-transform:uppercase;">MARGIN: {} PTS</td></tr></table>'.format(
-                _e(item["winner"] + ("  ·  " + winner_record if winner_record else "")), _e(f(item["winner_score"])), _e(item["loser"] + ("  ·  " + loser_record if loser_record else "")), _e(f(item["loser_score"])), _e(f(item["margin"]))
+            '<table role="presentation" width="100%" height="178" cellspacing="0" cellpadding="0" border="0" style="width:100%;height:178px;border-collapse:collapse;border:1px solid #D9DFE3;background:#ffffff;">'
+            '<tr><td height="68" valign="middle" style="height:68px;padding:8px 12px;background:#F7F8F8;border-bottom:1px solid #E1E5E8;">{}</td>'
+            '<td width="94" height="68" align="center" valign="middle" bgcolor="#F4EBDD" style="height:68px;padding:6px;background:#F4EBDD;border-bottom:1px solid #E1E5E8;">'
+            '<div style="font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:22px;line-height:25px;font-weight:900;color:#8B5D17;">{}</div>'
+            '<div style="height:17px;margin-top:3px;line-height:12px;overflow:hidden;">{}</div></td></tr>'
+            '<tr><td height="68" valign="middle" style="height:68px;padding:8px 12px;border-bottom:1px solid #E1E5E8;">{}</td>'
+            '<td width="94" height="68" align="center" valign="middle" style="height:68px;padding:6px;border-bottom:1px solid #E1E5E8;">'
+            '<div style="font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:20px;line-height:24px;font-weight:900;color:#112B3E;">{}</div>'
+            '<div style="height:17px;margin-top:3px;line-height:12px;overflow:hidden;">{}</div></td></tr>'
+            '<tr><td height="30" valign="middle" style="height:30px;padding:5px 8px 5px 12px;color:#667680;background:#FBFBFB;font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap;">MARGIN: {} PTS</td>'
+            '<td width="94" height="30" align="right" valign="middle" style="height:30px;padding:4px 6px;background:#FBFBFB;white-space:nowrap;">{}</td></tr></table>'.format(
+                team_html(winner), _e(f(item["winner_score"])), badge_html(winner_badges),
+                team_html(loser), _e(f(item["loser_score"])), badge_html(loser_badges),
+                _e(f(item["margin"])), badge_html(matchup_labels, True),
             )
         )
     return _section("Matchup Results", _card_table(cards, 2))
 
 def _weekly_highlights(ctx):
+    """Weekly-only Beyond the Box Score, kept in this render slot for layout order."""
     glance = ctx.get("glance") or {}
     summary = ctx.get("lineup_summary") or {}
-    matchups = ctx.get("matchups") or []
+    weekly_rows = ctx.get("all_play_week") or []
 
-    high = glance.get("highest_team_score") or {}
-    low = glance.get("lowest_team_score") or {}
     starter = glance.get("top_starter") or {}
     bench = glance.get("top_bench_player") or {}
     best = summary.get("best_efficiency") or {}
-    left = summary.get("most_points_left") or {}
+    worst = summary.get("worst_efficiency") or {}
     miss = summary.get("worst_decision") or {}
-    close = min(matchups, key=lambda x: x["margin"]) if matchups else {}
-    blow = max(matchups, key=lambda x: x["margin"]) if matchups else {}
+    deepest = summary.get("deepest_lineup") or {}
+    most_bench = summary.get("most_bench_points") or summary.get("most_points_left") or {}
 
-    rows = [
-        (
-            _highlight_card("High Score", high.get("team_name", "-"), "{} pts".format(f(high.get("score"))), 0) if high else "",
-            _highlight_card("Biggest Blowout", "{} over {}".format(blow["winner"], blow["loser"]), "{} pt margin".format(f(blow["margin"])), 1) if blow else "",
-            _highlight_card("Most Points Left on Bench", left.get("team_name", "-"), "{} points".format(f(left.get("points_left_on_bench"))), 2) if left else "",
-        ),
-        (
-            _highlight_card("Low Score", low.get("team_name", "-"), "{} pts".format(f(low.get("score"))), 0) if low else "",
-            _highlight_card("Closest Matchup", "{} over {}".format(close["winner"], close["loser"]), "{} pt margin".format(f(close["margin"])), 1) if close else "",
-            _highlight_card("Biggest Lineup Miss", miss.get("team_name", "-"), "{} over {} (+{})".format(
-                miss.get("biggest_bench_player", "-"), miss.get("replaced_starter", "-"),
-                f(miss.get("decision_points_gained"))), 2) if miss else "",
-        ),
-        (
-            _highlight_card("Top Individual Performance", starter.get("player_name", "-"),
-                "{} pts - {}".format(f(starter.get("points")), starter.get("team_name", "")).rstrip(" -"), 0) if starter else "",
-            _highlight_card("Best Lineup", best.get("team_name", "-"),
-                "{}% efficient".format(f(best.get("lineup_efficiency"), 1)), 1) if best else "",
-            _highlight_card("Top Bench Player", bench.get("player_name", "-"),
-                "{} pts - {}".format(f(bench.get("points")), bench.get("team_name", "")).rstrip(" -"), 2) if bench else "",
-        ),
+    def weekly_luck(row):
+        result = str(row.get("actual_result") or "").upper()
+        actual = 1.0 if result == "W" else (0.5 if result == "T" else 0.0)
+        return actual - num(row.get("expected_weekly_wins"))
+
+    lucky = max(weekly_rows, key=weekly_luck) if weekly_rows else {}
+    unlucky = min(weekly_rows, key=weekly_luck) if weekly_rows else {}
+
+    # Prefer Yahoo's pregame projection. If unavailable, compare with the
+    # team's entering scoring average. Week 1 can legitimately have no
+    # Overachiever card if projections are absent because there is no prior avg.
+    over = {}
+    over_detail = ""
+    projected = [r for r in weekly_rows if num(r.get("projected_points")) > 0]
+    if projected:
+        over = max(projected, key=lambda r: num(r.get("points")) - num(r.get("projected_points")))
+        over_detail = "{:+.2f}".format(num(over.get("points")) - num(over.get("projected_points")))
+    else:
+        current_week = int(num(ctx.get("week")))
+        prior_by_team = {}
+        for row in ctx.get("all_weekly_rows") or []:
+            if int(num(row.get("week"))) < current_week:
+                prior_by_team.setdefault(str(row.get("team_key") or ""), []).append(num(row.get("weekly_score")))
+        candidates = []
+        for row in weekly_rows:
+            prior = prior_by_team.get(str(row.get("team_key") or "")) or []
+            if prior:
+                avg = sum(prior) / len(prior)
+                candidates.append((num(row.get("points")) - avg, row))
+        if candidates:
+            delta, over = max(candidates, key=lambda x: x[0])
+            over_detail = "{:+.2f}".format(delta)
+
+    cards = [
+        _highlight_card("Top Individual Performance", starter.get("player_name", "-"), "{} pts - {}".format(f(starter.get("points")), starter.get("team_name", "")).rstrip(" -"), 0) if starter else "",
+        _highlight_card("Highest Scoring Bench Player", bench.get("player_name", "-"), "{} pts - {}".format(f(bench.get("points")), bench.get("team_name", "")).rstrip(" -"), 1) if bench else "",
+        _highlight_card("Most Efficient Lineup", best.get("team_name", "-"), "{}%".format(f(best.get("lineup_efficiency"), 1)), 0) if best else "",
+        _highlight_card("Least Efficient Lineup", worst.get("team_name", "-"), "{}%".format(f(worst.get("lineup_efficiency"), 1)), 1) if worst else "",
+        _highlight_card("Luckiest", lucky.get("team_name", "-"), "{:+.2f} wins vs expected".format(weekly_luck(lucky)), 0) if lucky else "",
+        _highlight_card("Unluckiest", unlucky.get("team_name", "-"), "{:+.2f} wins vs expected".format(weekly_luck(unlucky)), 1) if unlucky else "",
+        _highlight_card("Overachiever", over.get("team_name", "-"), over_detail, 0) if over else "",
+        _highlight_card("Biggest Lineup Miss", miss.get("team_name", "-"), "-{} pts".format(f(miss.get("decision_points_gained"))), 1) if miss else "",
+        _highlight_card("Highest Floor", deepest.get("team_name", "-"), "{} pts".format(f(deepest.get("lowest_starter_points"))), 0) if deepest else "",
+        _highlight_card("Most Points Left on Bench", most_bench.get("team_name", "-"), "{}".format(f(most_bench.get("bench_points"))), 1) if most_bench else "",
     ]
-    cards = [card for row in rows for card in row if card]
-    return _section("Weekly Highlights", _card_table(cards, 3))
-
-
+    cards = [card for card in cards if card]
+    body = _card_table(cards, 2)
+    if body:
+        body += _note("Luck Rating = Actual Result - All-Play Win %, where Actual Result is 1 for a win, 0.5 for a tie, and 0 for a loss. Lineup Efficiency = Starting Lineup Score / Optimal Legal Lineup Score.")
+    return _section("Beyond the Box Score", body)
 
 def _pulse_stat(label, value, detail, width):
     return (
@@ -294,11 +415,19 @@ def _league_pulse(ctx):
     return _section("League Pulse", body)
 
 
+def _display_record(row):
+    return "{}-{}-{}".format(
+        int(num(row.get("actual_wins"))),
+        int(num(row.get("actual_losses"))),
+        int(num(row.get("actual_ties"))),
+    )
+
+
 def _standings(ctx, final=False):
     rows = [[
         _e(r.get("standings_rank", "")),
         _e(r.get("team_name", "")),
-        _e(record(r)),
+        _e(_display_record(r)),
         _e(f(r.get("points_for"))),
         _e(movement(r.get("standings_movement"))),
         _e(r.get("current_streak", "")),
@@ -306,28 +435,46 @@ def _standings(ctx, final=False):
     return _section(
         "Final Regular-Season Standings" if final else "Standings",
         _table(["Rank", "Team", "Record", "PF", "Move", "Streak"], rows,
-               ["8%", "38%", "13%", "14%", "12%", "15%"])
+               ["8%", "38%", "13%", "14%", "12%", "15%"],
+               alignments=["center", "left", "center", "center", "center", "center"])
     )
 
 
 def _power_rankings(ctx, final=False):
-    rows = [[
-        _e(r.get("power_rank", "")),
-        _e(r.get("team_name", "")),
-        _e(f(r.get("power_score"))),
-        _e(f(r.get("season_points"))),
-        _e(pct(r.get("all_play_win_pct"))),
-        _e(f(r.get("recent_avg_points"))),
-        _e(record(r)),
-    ] for r in ctx.get("power", [])]
+    weekly_by_key = {str(r.get("team_key") or ""): r for r in (ctx.get("weekly_rows") or [])}
+    luck_by_key = {str(r.get("team_key") or ""): r for r in (ctx.get("luck") or [])}
+    sos_by_key = {str(r.get("team_key") or ""): r for r in (ctx.get("sos") or [])}
+
+    rows = []
+    for r in ctx.get("power", []):
+        key = str(r.get("team_key") or "")
+        season = weekly_by_key.get(key, {})
+        luck = luck_by_key.get(key, {})
+        sos = sos_by_key.get(key, {})
+        ap_w = int(num(season.get("all_play_wins")))
+        ap_l = int(num(season.get("all_play_losses")))
+        ap_t = int(num(season.get("all_play_ties")))
+        ap_record = "{}-{}-{}".format(ap_w, ap_l, ap_t)
+        rows.append([
+            _e(r.get("power_rank", "")),
+            '<span style="white-space:nowrap;">{}</span>'.format(_e(r.get("team_name", ""))),
+            _e(f(r.get("power_score"))),
+            _e(f(r.get("season_points"))),
+            _e(ap_record),
+            _e(pct(r.get("all_play_win_pct"))),
+            _e("{:+.2f}".format(num(luck.get("luck_wins")))),
+            _e(f(sos.get("avg_opponent_score"))),
+            _e(_display_record(season)),
+        ])
     body = _table(
-        ["Rank", "Team", "Power", "PF", "All-Play", "Recent", "Record"],
-        rows, ["7%", "31%", "11%", "12%", "13%", "13%", "13%"]
+        ["Rank", "Team", "Power", "PF", "AP Record", "AP %", "Luck", "Opp Avg", "Record"],
+        rows,
+        ["5%", "27%", "8%", "8%", "12%", "8%", "8%", "12%", "10%"],
+        alignments=["center", "left", "center", "center", "center", "center", "center", "center", "center"],
     )
     if body:
-        body += _note("Formula: 30% season scoring - 25% all-play - 35% recent form - 10% record")
+        body += _note("All-Play, Luck and Opp Avg are season-to-date through this week. Power Ranking Formula: 30% season scoring - 25% all-play - 35% recent form - 10% record")
     return _section("Final Regular-Season Power Rankings" if final else "Power Rankings", body)
-
 
 def _challenge_header(data):
     if not data:
@@ -431,65 +578,10 @@ def _next_challenge(ctx):
 
 
 def _beyond_box_score(ctx, season=False):
-    season_luck = ctx.get("luck") or []
-    weekly_rows = ctx.get("all_play_week") or []
-    sos = ctx.get("sos") or []
-    cards = []
-
-    if weekly_rows and not season:
-        projected_rows = [r for r in weekly_rows if num(r.get("projected_points")) > 0]
-        if projected_rows:
-            best = max(projected_rows, key=lambda r: num(r.get("points")) - num(r.get("projected_points")))
-            delta = num(best.get("points")) - num(best.get("projected_points"))
-            cards.append(_highlight_card("This Week - Overachiever", best.get("team_name", "-"), "{:+.2f} points over projected".format(delta), 0))
-        else:
-            current_week = int(ctx.get("week", 0))
-            prior_by_team = {}
-            for row in ctx.get("all_weekly_rows") or []:
-                if int(num(row.get("week"))) < current_week:
-                    key = str(row.get("team_key") or "")
-                    prior_by_team.setdefault(key, []).append(num(row.get("weekly_score")))
-            candidates = []
-            for row in weekly_rows:
-                prior = prior_by_team.get(str(row.get("team_key") or "")) or []
-                if prior:
-                    avg = sum(prior) / len(prior)
-                    candidates.append((num(row.get("points")) - avg, row))
-            if candidates:
-                delta, best = max(candidates, key=lambda x: x[0])
-                cards.append(_highlight_card("This Week - Overachiever", best.get("team_name", "-"), "{:+.2f} vs entering avg".format(delta), 0))
-
-        def weekly_luck(row):
-            result = str(row.get("actual_result") or "").upper()
-            actual = 1.0 if result == "W" else (0.5 if result == "T" else 0.0)
-            return actual - num(row.get("expected_weekly_wins"))
-
-        lucky = max(weekly_rows, key=weekly_luck)
-        unlucky = min(weekly_rows, key=weekly_luck)
-        cards.append(_highlight_card("This Week - Luckiest", lucky.get("team_name", "-"), "{:+.2f} wins vs expected".format(weekly_luck(lucky)), 0))
-        cards.append(_highlight_card("This Week - Unluckiest", unlucky.get("team_name", "-"), "{:+.2f} wins vs expected".format(weekly_luck(unlucky)), 0))
-
-    current = ctx.get("weekly_rows") or []
-    if current:
-        best_season = max(current, key=lambda r: num(r.get("all_play_win_pct")))
-        worst_season = min(current, key=lambda r: num(r.get("all_play_win_pct")))
-        cards.append(_highlight_card("Season - All-Play Leader", best_season.get("team_name", "-"), pct(best_season.get("all_play_win_pct")), 1))
-        cards.append(_highlight_card("Season - All-Play Bottom", worst_season.get("team_name", "-"), pct(worst_season.get("all_play_win_pct")), 2))
-
-    if season_luck:
-        cards.append(_highlight_card("Season - Luckiest", season_luck[0].get("team_name", "-"), "{:+.2f} wins vs expected".format(num(season_luck[0].get("luck_wins"))), 1))
-        cards.append(_highlight_card("Season - Unluckiest", season_luck[-1].get("team_name", "-"), "{:+.2f} wins vs expected".format(num(season_luck[-1].get("luck_wins"))), 1))
-
-    if sos:
-        cards.append(_highlight_card("Season - Toughest SOS", sos[0].get("team_name", "-"), "{} SOS - {} opp avg".format(pct(sos[0].get("strength_of_schedule")), f(sos[0].get("avg_opponent_score"))), 2))
-        cards.append(_highlight_card("Season - Weakest SOS", sos[-1].get("team_name", "-"), "{} SOS - {} opp avg".format(pct(sos[-1].get("strength_of_schedule")), f(sos[-1].get("avg_opponent_score"))), 2))
-
-    title = "Beyond the Box Score - Season Edition" if season else "Beyond the Box Score"
-    body = _card_table(cards, 3)
-    if body:
-        body += _note("Weekly luck compares the matchup result with that week's all-play expectation. Season luck and SOS are through this newsletter week.")
-    return _section(title, body)
-
+    # Weekly Beyond the Box Score is rendered in the former Weekly Highlights
+    # slot so it sits directly after Matchup Results. Season measures now live
+    # in Power Rankings.
+    return ""
 
 def _upcoming_matchups(ctx, title="Next Week's Matchups"):
     data = ctx.get("upcoming_data") or {}
@@ -1188,7 +1280,7 @@ def build_weekly_email_html(
         '<td width="150" align="center" valign="middle" style="width:150px;padding:18px 24px;border-left:2px solid #C58A2A;">'
         '<div style="font-size:9px;line-height:12px;letter-spacing:2px;color:#D7DEE2;text-transform:uppercase;">WEEK</div>'
         '<div style="font-family:Arial Black,Arial,sans-serif;font-size:46px;line-height:48px;font-weight:900;color:#FFFFFF;">{}</div>'
-        '<div style="margin-top:3px;font-size:9px;line-height:12px;letter-spacing:1.4px;color:#D59A35;text-transform:uppercase;">XTREME FOOTBALL</div>'
+        ''
         '</td></tr></table></td></tr>'
         '<tr><td align="left" style="padding:0;text-align:left;">{}</td></tr>'
         '<tr><td align="center" style="padding:20px 28px;font-family:Arial,Helvetica,sans-serif;'
