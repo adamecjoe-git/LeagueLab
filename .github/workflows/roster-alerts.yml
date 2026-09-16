@@ -28,6 +28,17 @@ on:
         required: false
         default: "Hawk Tua Taco Viola"
 
+      handoff_test:
+        description: "Dry-run saved-plan handoff (no Yahoo, email, or SMS)"
+        required: true
+        default: false
+        type: boolean
+
+      test_now:
+        description: "Simulated Central time for handoff test (ISO 8601)"
+        required: false
+        default: ""
+
   schedule:
     # Lightweight watcher. It does NOT query nflverse unless a checkpoint
     # from the morning plan is actually due.
@@ -65,6 +76,8 @@ jobs:
           MANUAL_SEASON: ${{ inputs.season }}
           MANUAL_WEEK: ${{ inputs.week }}
           MANUAL_ONLY_TEAM: ${{ inputs.only_team }}
+          HANDOFF_TEST: ${{ inputs.handoff_test }}
+          TEST_NOW: ${{ inputs.test_now }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -85,7 +98,10 @@ jobs:
 
           event_name = os.environ.get("EVENT_NAME", "")
 
-          if event_name == "workflow_dispatch":
+          handoff_test = os.environ.get("HANDOFF_TEST", "false").lower() == "true"
+          test_now_text = os.environ.get("TEST_NOW", "").strip()
+
+          if event_name == "workflow_dispatch" and not handoff_test:
               mode = os.environ.get("MANUAL_MODE", "preview")
               season = os.environ.get("MANUAL_SEASON", "2026")
               week = os.environ.get("MANUAL_WEEK", "1")
@@ -169,14 +185,19 @@ jobs:
                   archive.read(plan_names[0]).decode("utf-8")
               )
 
-          today = datetime.now().astimezone().date().isoformat()
-          # GitHub runners are UTC. Use a shell-independent Central date.
-          import subprocess
-          today = subprocess.check_output(
-              ["date", "+%F"],
-              env=dict(os.environ, TZ="America/Chicago"),
-              text=True,
-          ).strip()
+          if handoff_test:
+              if not test_now_text:
+                  raise SystemExit(
+                      "handoff_test requires test_now, for example "
+                      "2026-09-17T18:30:00-05:00"
+                  )
+              simulated_now = datetime.fromisoformat(test_now_text)
+              if simulated_now.tzinfo is None:
+                  raise SystemExit("test_now must include a UTC offset.")
+              today = simulated_now.date().isoformat()
+          else:
+              # Workflow TZ is America/Chicago.
+              today = datetime.now().astimezone().date().isoformat()
 
           if plan.get("date") != today:
               raise SystemExit(
@@ -201,7 +222,11 @@ jobs:
               print("Today's saved plan has no NFL alert checkpoints.")
               raise SystemExit(0)
 
-          now = datetime.now(timezone.utc)
+          if handoff_test:
+              now = datetime.fromisoformat(test_now_text).astimezone(timezone.utc)
+              print("HANDOFF TEST: using simulated time", test_now_text)
+          else:
+              now = datetime.now(timezone.utc)
           due_rows = []
 
           print("Saved plan date:", plan.get("date"))
@@ -324,14 +349,20 @@ jobs:
         id: recheck
         if: >
           steps.plan.outputs.due == 'true' &&
-          github.event_name != 'workflow_dispatch'
+          (github.event_name != 'workflow_dispatch' || inputs.handoff_test == true)
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           PLANNED_SEASON: ${{ steps.plan.outputs.season }}
           PLANNED_WEEK: ${{ steps.plan.outputs.week }}
           PLANNED_CHECKPOINT: ${{ steps.plan.outputs.checkpoint }}
+          HANDOFF_TEST: ${{ inputs.handoff_test }}
+          TEST_NOW: ${{ inputs.test_now }}
         run: |
-          TODAY="$(TZ=America/Chicago date +%F)"
+          if [ "$HANDOFF_TEST" = "true" ]; then
+            TODAY="${TEST_NOW%%T*}"
+          else
+            TODAY="$(date +%F)"
+          fi
 
           set +e
           python -m leaguelab.dynamic_alert_scheduler \
@@ -362,7 +393,13 @@ jobs:
           expected_season = int(os.environ["PLANNED_SEASON"])
           expected_week = int(os.environ["PLANNED_WEEK"])
           expected_checkpoint = int(os.environ["PLANNED_CHECKPOINT"])
-          now = datetime.now(timezone.utc)
+          test_now_text = os.environ.get("TEST_NOW", "").strip()
+          handoff_test = os.environ.get("HANDOFF_TEST", "false").lower() == "true"
+          if handoff_test:
+              now = datetime.fromisoformat(test_now_text).astimezone(timezone.utc)
+              print("HANDOFF TEST live recheck time:", test_now_text)
+          else:
+              now = datetime.now(timezone.utc)
 
           if (
               int(plan.get("season") or -1) != expected_season
@@ -427,14 +464,27 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           RECHECK_PROCEED: ${{ steps.recheck.outputs.proceed }}
+          HANDOFF_TEST: ${{ inputs.handoff_test }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$HANDOFF_TEST" = "true" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Dry-run handoff test: stopping before Yahoo/notifications."
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           elif [ "$RECHECK_PROCEED" = "true" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Handoff dry-run result
+        if: inputs.handoff_test == true
+        run: |
+          echo "Saved-plan due: ${{ steps.plan.outputs.due }}"
+          echo "Checkpoint: ${{ steps.plan.outputs.checkpoint }}"
+          echo "Live recheck proceed: ${{ steps.recheck.outputs.proceed }}"
+          echo "Alert engine run: ${{ steps.proceed.outputs.run }}"
+          echo "No Yahoo refresh, email, or SMS was executed."
 
       - name: Install Playwright Chromium
         if: steps.proceed.outputs.run == 'true'
