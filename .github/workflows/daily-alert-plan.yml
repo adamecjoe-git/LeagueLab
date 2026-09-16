@@ -2,6 +2,11 @@ name: LeagueLab Daily NFL Plan
 
 on:
   workflow_dispatch:
+    inputs:
+      date:
+        description: "Plan date YYYY-MM-DD (blank = today in America/Chicago)"
+        required: false
+        default: ""
   schedule:
     # 12:07 UTC = 7:07 AM CDT / 6:07 AM CST.
     # Runs daily during the NFL fantasy season.
@@ -55,17 +60,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build today's NFL alert plan
+      - name: Build NFL alert plan
         env:
           PYTHONPATH: ${{ github.workspace }}/src
+          REQUESTED_DATE: ${{ inputs.date }}
         run: |
-          TODAY="$(TZ=America/Chicago date +%F)"
+          if [ -n "$REQUESTED_DATE" ]; then
+            PLAN_DATE="$REQUESTED_DATE"
+          else
+            PLAN_DATE="$(TZ=America/Chicago date +%F)"
+          fi
+
           mkdir -p data/state/daily_alert_plan
 
-          echo "Building LeagueLab plan for $TODAY"
+          echo "Building LeagueLab plan for $PLAN_DATE"
 
           python -m leaguelab.dynamic_alert_scheduler \
-            --date "$TODAY" \
+            --date "$PLAN_DATE" \
             --include-past \
             --json \
             > data/state/daily_alert_plan/plan.json
