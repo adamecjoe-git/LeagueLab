@@ -1,363 +1,65 @@
-"""
-LeagueLab dynamic roster-alert scheduler.
+"""LeagueLab game-day scheduler. Python 3.8 compatible."""
+import argparse, csv, io, json, sys, time, urllib.error, urllib.request
+from datetime import date, datetime
+from leaguelab.roster_alert_runner import _build_schedule_source, _load_notification_config
+URL="https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv"
 
-Build an alert checkpoint plan from the NFL schedule.
+def _dt(v):
+    s=str(v or "").strip()
+    if s.endswith("Z"): s=s[:-1]+"+00:00"
+    try: return datetime.fromisoformat(s)
+    except ValueError: return None
 
-Reliability:
-- nflverse week discovery retries transient download failures.
-- the production HybridScheduleSource remains responsible for the actual
-  game schedule and its ESPN/cache fallback behavior.
-- source failures are raised; they are never treated as "no games".
-
-Python 3.8 compatible.
-"""
-
-import argparse
-import csv
-import io
-import json
-import sys
-import time
-import urllib.error
-import urllib.request
-from datetime import date, datetime, timedelta
-
-from leaguelab.roster_alert_runner import (
-    _build_schedule_source,
-    _load_notification_config,
-)
-
-
-DEFAULT_NFLVERSE_URL = (
-    "https://github.com/nflverse/nflverse-data/releases/download/"
-    "schedules/games.csv"
-)
-
-DEFAULT_DOWNLOAD_ATTEMPTS = 4
-DEFAULT_RETRY_SECONDS = 3
-
-
-def _parse_iso_datetime(value):
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        return None
-
-
-def _download_text(url, timeout_seconds, attempts=4, retry_seconds=3):
-    attempts = max(1, int(attempts))
-    retry_seconds = max(0, int(retry_seconds))
-    last_error = None
-
-    for attempt in range(1, attempts + 1):
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "LeagueLab/1.0",
-                "Accept": "text/csv,*/*;q=0.8",
-            },
-        )
+def _download(url, timeout=15, attempts=4):
+    last=None
+    for n in range(1,attempts+1):
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=timeout_seconds,
-            ) as response:
-                raw = response.read()
-
-            if not raw:
-                raise RuntimeError("NFL schedule source returned an empty response.")
-
+            r=urllib.request.Request(url,headers={"User-Agent":"LeagueLab/1.0"})
+            with urllib.request.urlopen(r,timeout=timeout) as x: raw=x.read()
+            if not raw: raise RuntimeError("empty NFL schedule response")
             return raw.decode("utf-8-sig")
+        except Exception as e:
+            last=e
+            if n<attempts: time.sleep(3*n)
+    raise RuntimeError("NFL schedule download failed: {}".format(last))
 
-        except (
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-            ConnectionError,
-            TimeoutError,
-            OSError,
-            RuntimeError,
-        ) as exc:
-            last_error = exc
-            print(
-                "NFL schedule download failed "
-                "(attempt {}/{}): {}".format(attempt, attempts, exc),
-                file=sys.stderr,
-            )
+def _week(day,cfg):
+    sc=cfg.get("schedule",{}) or {}
+    rows=csv.DictReader(io.StringIO(_download(sc.get("nflverse_url") or URL,int(sc.get("timeout_seconds",15)),int(sc.get("download_attempts",4)))))
+    found=set()
+    for r in rows:
+        if str(r.get("gameday","")).strip()!=day.isoformat(): continue
+        if str(r.get("game_type","")).strip().upper() not in ("","REG"): continue
+        try: found.add((int(r["season"]),int(r["week"])))
+        except Exception: pass
+    if not found: return None
+    if len(found)!=1: raise RuntimeError("multiple season/weeks found: {}".format(sorted(found)))
+    s,w=next(iter(found)); return s,w
 
-            if attempt < attempts:
-                delay = retry_seconds * attempt
-                print(
-                    "Retrying in {} second(s)...".format(delay),
-                    file=sys.stderr,
-                )
-                time.sleep(delay)
-
-    raise RuntimeError(
-        "NFL schedule download failed after {} attempts: {}".format(
-            attempts,
-            last_error,
-        )
-    )
-
-
-def _discover_regular_season_week(target_date, config):
-    """
-    Discover the NFL season/week for target_date from nflverse.
-
-    None means the schedule was downloaded successfully and there are no
-    regular-season games on target_date. Download failures raise instead.
-    """
-    schedule_cfg = config.get("schedule", {}) or {}
-    url = str(schedule_cfg.get("nflverse_url") or DEFAULT_NFLVERSE_URL)
-    timeout_seconds = int(schedule_cfg.get("timeout_seconds", 15))
-    attempts = int(
-        schedule_cfg.get("download_attempts", DEFAULT_DOWNLOAD_ATTEMPTS)
-    )
-    retry_seconds = int(
-        schedule_cfg.get("retry_seconds", DEFAULT_RETRY_SECONDS)
-    )
-
-    text = _download_text(
-        url,
-        timeout_seconds,
-        attempts=attempts,
-        retry_seconds=retry_seconds,
-    )
-    reader = csv.DictReader(io.StringIO(text))
-
-    target_text = target_date.isoformat()
-    matches = []
-
-    for row in reader:
-        gameday = str(row.get("gameday", "") or "").strip()
-        game_type = str(row.get("game_type", "") or "").strip().upper()
-
-        if gameday != target_text:
-            continue
-        if game_type and game_type != "REG":
-            continue
-
-        try:
-            season = int(row.get("season"))
-            week = int(row.get("week"))
-        except (TypeError, ValueError):
-            continue
-
-        matches.append((season, week))
-
-    distinct = sorted(set(matches))
-
-    if not distinct:
-        return None
-
-    if len(distinct) != 1:
-        raise RuntimeError(
-            "Expected one NFL regular-season season/week for {}, found {}.".format(
-                target_text,
-                distinct,
-            )
-        )
-
-    return {
-        "season": distinct[0][0],
-        "week": distinct[0][1],
-    }
-
-
-def _localize_kickoff(kickoff, local_now):
-    if kickoff is None:
-        return None
-
-    if kickoff.tzinfo is not None and local_now.tzinfo is not None:
-        return kickoff.astimezone(local_now.tzinfo)
-
-    return kickoff
-
-
-def build_daily_plan(target_date, force_refresh=True, include_past=False, now=None):
-    config = _load_notification_config()
-    local_now = now or datetime.now().astimezone()
-
-    week_info = _discover_regular_season_week(target_date, config)
-
-    empty = {
-        "date": target_date.isoformat(),
-        "season": None,
-        "week": None,
-        "schedule": None,
-        "checkpoints": [],
-    }
-
-    if week_info is None:
-        return empty
-
-    season = int(week_info["season"])
-    week = int(week_info["week"])
-
-    source, schedule_label = _build_schedule_source(
-        config=config,
-        season=season,
-        week=week,
-        force_refresh=bool(force_refresh),
-    )
-
-    alert_cfg = config.get("roster_alerts", {}) or {}
-    checkpoint_minutes = sorted(
-        set(
-            int(value)
-            for value in alert_cfg.get(
-                "alert_minutes_before_kickoff",
-                [30, 5],
-            )
-        ),
-        reverse=True,
-    )
-
-    groups = {}
-
-    for game in source.load_games():
-        kickoff = _localize_kickoff(
-            _parse_iso_datetime(game.get("kickoff")),
-            local_now,
-        )
-        if kickoff is None:
-            continue
-
-        if kickoff.date() != target_date:
-            continue
-
-        away = str(game.get("away", "") or "").strip().upper()
-        home = str(game.get("home", "") or "").strip().upper()
-
-        for minutes_before in checkpoint_minutes:
-            run_at = kickoff - timedelta(minutes=minutes_before)
-
-            if (
-                not include_past
-                and target_date == local_now.date()
-                and run_at <= local_now
-            ):
-                continue
-
-            key = run_at.isoformat()
-            group = groups.setdefault(
-                key,
-                {
-                    "run_at": run_at.isoformat(),
-                    "kickoffs": [],
-                },
-            )
-            group["kickoffs"].append(
-                {
-                    "kickoff_at": kickoff.isoformat(),
-                    "minutes_before": minutes_before,
-                    "away": away,
-                    "home": home,
-                }
-            )
-
-    checkpoints = [groups[key] for key in sorted(groups)]
-
-    return {
-        "date": target_date.isoformat(),
-        "season": season,
-        "week": week,
-        "schedule": schedule_label,
-        "checkpoints": checkpoints,
-    }
-
-
-def _format_plan(plan):
-    lines = []
-    lines.append("")
-    lines.append("LeagueLab Dynamic Alert Plan")
-    lines.append("============================")
-    lines.append("Date: {}".format(plan["date"]))
-
-    if plan.get("season") is None:
-        lines.append("No NFL regular-season games today.")
-        return "\n".join(lines)
-
-    lines.append("NFL: {} Week {}".format(plan["season"], plan["week"]))
-    lines.append("Schedule: {}".format(plan.get("schedule") or "unknown"))
-    lines.append("")
-
-    if not plan["checkpoints"]:
-        lines.append("No future alert checkpoints remain today.")
-        return "\n".join(lines)
-
-    for item in plan["checkpoints"]:
-        run_at = datetime.fromisoformat(item["run_at"])
-        lines.append(
-            "{}  RUN".format(
-                run_at.strftime("%a %I:%M %p").replace(" 0", " ")
-            )
-        )
-        for kickoff in item["kickoffs"]:
-            kickoff_at = datetime.fromisoformat(kickoff["kickoff_at"])
-            lines.append(
-                "    {} min before {} {} @ {}".format(
-                    kickoff["minutes_before"],
-                    kickoff_at.strftime("%I:%M %p").lstrip("0"),
-                    kickoff["away"],
-                    kickoff["home"],
-                )
-            )
-
-    return "\n".join(lines)
-
+def build_daily_plan(day, force_refresh=True, now=None):
+    cfg=_load_notification_config(); local=now or datetime.now().astimezone()
+    sw=_week(day,cfg)
+    if sw is None:
+        return {"date":day.isoformat(),"games_today":False,"complete":True,"season":None,"week":None,"schedule":None,"kickoff_groups":[]}
+    season,week=sw
+    source,label=_build_schedule_source(config=cfg,season=season,week=week,force_refresh=force_refresh)
+    groups={}
+    for g in source.load_games():
+        k=_dt(g.get("kickoff"))
+        if not k: continue
+        if k.tzinfo and local.tzinfo: k=k.astimezone(local.tzinfo)
+        if k.date()!=day: continue
+        key=k.isoformat()
+        groups.setdefault(key,{"kickoff_at":key,"games":[]})["games"].append({"away":str(g.get("away","")).upper(),"home":str(g.get("home","")).upper()})
+    gs=[groups[k] for k in sorted(groups)]
+    return {"date":day.isoformat(),"games_today":bool(gs),"complete":not bool(gs),"season":season,"week":week,"schedule":label,"kickoff_groups":gs}
 
 def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Build a LeagueLab roster-alert checkpoint plan from the real "
-            "NFL schedule."
-        )
-    )
-    parser.add_argument(
-        "--date",
-        default=None,
-        help="Local calendar date YYYY-MM-DD. Defaults to today.",
-    )
-    parser.add_argument(
-        "--no-refresh",
-        action="store_true",
-        help="Use the production schedule cache when possible.",
-    )
-    parser.add_argument(
-        "--include-past",
-        action="store_true",
-        help="Include checkpoints that have already passed.",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit machine-readable JSON only.",
-    )
-    args = parser.parse_args()
-
-    target_date = (
-        date.fromisoformat(args.date)
-        if args.date
-        else datetime.now().astimezone().date()
-    )
-
-    plan = build_daily_plan(
-        target_date=target_date,
-        force_refresh=not args.no_refresh,
-        include_past=args.include_past,
-    )
-
-    if args.json:
-        print(json.dumps(plan, indent=2, sort_keys=True))
+    p=argparse.ArgumentParser(); p.add_argument("--date"); p.add_argument("--no-refresh",action="store_true"); p.add_argument("--json",action="store_true"); a=p.parse_args()
+    day=date.fromisoformat(a.date) if a.date else datetime.now().astimezone().date()
+    plan=build_daily_plan(day,not a.no_refresh)
+    if a.json: print(json.dumps(plan,indent=2,sort_keys=True))
     else:
-        print(_format_plan(plan))
-
-
-if __name__ == "__main__":
-    main()
+        print("Date:",plan["date"]); print("Games today:",plan["games_today"])
+        for g in plan["kickoff_groups"]: print(g["kickoff_at"],len(g["games"]),"game(s)")
+if __name__=="__main__": main()
