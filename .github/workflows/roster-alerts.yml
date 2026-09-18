@@ -12,6 +12,7 @@ on:
       week: {description: "Fantasy week", required: true, default: "1"}
       only_team: {description: "Limit preview/test to one team", required: false, default: "Hawk Tua Taco Viola"}
       scheduler_test: {description: "Scheduler-only test; no Yahoo/email/SMS", required: true, default: false, type: boolean}
+      real_plan_test: {description: "Evaluate saved daily plan only; no Yahoo/email/SMS", required: true, default: false, type: boolean}
       test_now: {description: "ISO Central time with offset", required: false, default: ""}
       test_kickoffs: {description: "Comma-separated HH:MM kickoffs", required: false, default: ""}
       test_processed: {description: "Processed checkpoints e.g. 12:00@45", required: false, default: ""}
@@ -42,6 +43,7 @@ jobs:
           WEEK: ${{ inputs.week }}
           ONLY_TEAM: ${{ inputs.only_team }}
           SCHED_TEST: ${{ inputs.scheduler_test }}
+          REAL_PLAN_TEST: ${{ inputs.real_plan_test }}
           TEST_NOW: ${{ inputs.test_now }}
           TEST_KICKOFFS: ${{ inputs.test_kickoffs }}
           TEST_PROCESSED: ${{ inputs.test_processed }}
@@ -58,7 +60,8 @@ jobs:
               for k,v in [("due","false"),("mode","live"),("season",""),("week",""),("only_team",""),("checkpoint",""),("kickoff_at","")]:emit(k,v)
               print(msg);raise SystemExit(0)
           test=os.environ.get("SCHED_TEST","false").lower()=="true"
-          if os.environ["EVENT"]=="workflow_dispatch" and not test:
+          real_plan_test=os.environ.get("REAL_PLAN_TEST","false").lower()=="true"
+          if os.environ["EVENT"]=="workflow_dispatch" and not test and not real_plan_test:
               for k,v in [("due","true"),("mode",os.environ["MODE"]),("season",os.environ["SEASON"]),("week",os.environ["WEEK"]),("only_team",os.environ["ONLY_TEAM"]),("checkpoint","manual"),("kickoff_at","")]:emit(k,v)
               raise SystemExit(0)
           if test:
@@ -106,13 +109,13 @@ jobs:
           if test:print("SCHEDULER TEST ONLY - no Yahoo/email/SMS.")
           PY
       - name: Scheduler test result
-        if: inputs.scheduler_test == true
+        if: inputs.scheduler_test == true || inputs.real_plan_test == true
         run: |
           echo "Due=${{ steps.gate.outputs.due }}"
           echo "Checkpoint=${{ steps.gate.outputs.checkpoint }}"
           echo "Kickoff=${{ steps.gate.outputs.kickoff_at }}"
       - name: Restore config
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true
         env:
           MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
           NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
@@ -121,11 +124,11 @@ jobs:
           printf '%s' "$MANAGERS_JSON" > data/config/managers.json
           printf '%s' "$NOTIFICATIONS_JSON" > data/config/notifications.json
       - name: Install dependencies
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true
         run: pip install -r requirements.txt
       - name: Recheck live NFL schedule
         id: live
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && github.event_name != 'workflow_dispatch'
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true && github.event_name != 'workflow_dispatch'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           EXPECTED: ${{ steps.gate.outputs.kickoff_at }}
@@ -147,7 +150,7 @@ jobs:
           PY
       - name: Decide production handoff
         id: proceed
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ steps.live.outputs.proceed }}" = "true" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
       - name: Install Playwright Chromium
@@ -203,7 +206,12 @@ jobs:
           LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
         run: |
-          python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --refresh-schedule --refresh-yahoo
+          ONLY_TEAM="${{ steps.gate.outputs.only_team }}"
+          if [ -n "$ONLY_TEAM" ] && [ "${{ steps.gate.outputs.mode }}" != "live" ]; then
+            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --only-team "$ONLY_TEAM" --refresh-schedule --refresh-yahoo
+          else
+            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --refresh-schedule --refresh-yahoo
+          fi
       - name: Save alert state
         if: always() && steps.proceed.outputs.run == 'true' && steps.gate.outputs.mode == 'live'
         uses: actions/upload-artifact@v4
