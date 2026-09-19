@@ -108,14 +108,21 @@ class PostseasonTests(unittest.TestCase):
             html = email._next_round_cards(dict(week=week, postseason_data=data_for(week)))
             self.assertEqual(html.count('height="174" cellspacing'), count)
             self.assertNotIn("MATCHUP TO WATCH", html)
+            self.assertEqual(html.count('background:#C58A2A;color:#FFFFFF;'), count)
             self.assertIn("Proj 120.00", html)
             self.assertIn("font-size:15px", html)
 
     def test_toilet_placement_visible_and_playoff_renderer_runs(self):
-        for week in (15, 16, 17):
+        for week in (14, 15, 16, 17):
             ctx = dict(week=week, postseason_data=data_for(week))
-            self.assertIn("11th / 12th Place", email._toilet_bowl(ctx, "Toilet Bowl"))
-            self.assertIn("137.15", email._playoff_bracket(ctx, "Playoffs"))
+            html = email._toilet_bowl(ctx, "Toilet Bowl", preview=week == 14)
+            self.assertIn("11th / 12th Place", html)
+            self.assertEqual(html.count('border-bottom:2px solid #C6923D;'), 4)
+            self.assertNotIn('rowspan=', html)
+            if week == 14:
+                self.assertEqual(html.count('>TBD</td>'), 4)
+            if week >= 15:
+                self.assertIn("137.15", email._playoff_bracket(ctx, "Playoffs"))
 
     def test_awards_use_payouts_without_seeds(self):
         data = data_for(17)

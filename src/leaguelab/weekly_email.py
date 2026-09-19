@@ -776,7 +776,8 @@ def _next_round_cards(ctx):
             '<table role="presentation" width="100%" height="174" cellspacing="0" cellpadding="0" border="0" '
             'style="width:100%;height:174px;border-collapse:collapse;background:#F7F8F8;border:1px solid #D8DEE3;">'
             '<tr><td height="174" valign="middle" style="height:174px;padding:15px 16px;font-family:Arial,Helvetica,sans-serif;color:#222A30;">'
-            '<div style="margin-bottom:9px;color:#A66D12;font-size:11px;line-height:13px;font-weight:bold;'
+            '<div style="display:inline-block;margin:0 0 9px 0;padding:5px 9px;background:#C58A2A;color:#FFFFFF;'
+            'font-family:Arial Black,Arial,sans-serif;font-size:11px;line-height:13px;font-weight:900;'
             'letter-spacing:.6px;text-transform:uppercase;">{}</div>{}'
             '<div style="padding:6px 0;color:#71808A;font-size:12px;line-height:14px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;">vs</div>'
             '{}</td></tr></table>'.format(_e(label), line(a), line(b))
@@ -975,8 +976,11 @@ def _toilet_bowl(ctx, title, preview=False):
         _toilet_item(data.get("championship")),
         "Final",
     )
+    placement_card = _bracket_matchup_card(
+        _toilet_item(third_place), "11th / 12th Place",
+    )
 
-    # Two semifinal rows feeding a vertically centered Final.
+    # Keep both placement games in the second column, including TBD previews.
     body = (
         '<div style="margin-bottom:8px;color:#142B3D;font-family:Arial,Helvetica,sans-serif;'
         'font-size:13px;line-height:16px;font-weight:bold;text-transform:uppercase;'
@@ -985,18 +989,12 @@ def _toilet_bowl(ctx, title, preview=False):
         'style="width:100%;table-layout:fixed;border-collapse:collapse;">'
         '<tr>'
         '<td width="50%" valign="middle" style="padding:5px 14px 5px 0;">{}</td>'
-        '<td width="50%" rowspan="2" valign="middle" style="padding:5px 0 5px 14px;">{}</td>'
+        '<td width="50%" valign="middle" style="padding:5px 0 5px 14px;">{}</td>'
         '</tr>'
-        '<tr><td valign="middle" style="padding:5px 14px 5px 0;">{}</td></tr>'
+        '<tr><td valign="middle" style="padding:5px 14px 5px 0;">{}</td>'
+        '<td valign="middle" style="padding:5px 0 5px 14px;">{}</td></tr>'
         '</table>'
-    ).format(semi_cards[0], final_card, semi_cards[1])
-
-    if third_place:
-        body += (
-            '<div style="margin:14px 0 7px;color:#142B3D;font-family:Arial,Helvetica,sans-serif;'
-            'font-size:13px;font-weight:bold;">11th / 12th Place Matchup</div>'
-            + _bracket_matchup_card(_toilet_item(third_place), "11th Place")
-        )
+    ).format(semi_cards[0], final_card, semi_cards[1], placement_card)
 
     subtitle = "Seeds are final regular-season standings."
     if not preview:
