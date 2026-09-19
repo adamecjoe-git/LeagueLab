@@ -113,7 +113,7 @@ def _section(title, body, subtitle=""):
         '<tr><td align="left" style="padding:26px 34px 28px;border-bottom:1px solid #DCE1E4;font-family:Arial,Helvetica,sans-serif;color:#20272C;text-align:left;">'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;"><tr>'
         '<td valign="bottom"><div style="margin:0;color:#112B3E;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:22px;font-weight:900;line-height:27px;text-transform:uppercase;letter-spacing:-.3px;">{}</div>'
-        '<div style="width:48px;height:4px;line-height:4px;background:#C58A2A;margin:8px 0 0 0;">&nbsp;</div></td>'
+        '<table role="presentation" width="48" cellspacing="0" cellpadding="0" border="0" style="width:48px;border-collapse:collapse;margin-top:8px;"><tr><td width="48" height="4" style="width:48px;height:4px;line-height:4px;font-size:1px;background:#C58A2A;">&nbsp;</td></tr></table></td>'
         '</tr></table>{}{}</td></tr></table>'
     ).format(_e(title), subtitle_html, body)
 
@@ -229,7 +229,7 @@ def _highlight_card(label, value, detail="", column=0):
         '<table role="presentation" width="100%" height="118" cellspacing="0" cellpadding="0" border="0" '
         'style="width:100%;height:118px;border-collapse:collapse;background:#F7F8F8;border:1px solid #DCE1E4;">'
         '<tr><td width="78" height="118" align="center" valign="middle" style="width:78px;height:118px;padding:0 7px;background:#F0F2F3;border-right:1px solid #DCE1E4;">'
-        '<div style="font-family:Arial Black,Arial,sans-serif;font-size:21px;line-height:24px;font-weight:900;color:{};letter-spacing:-.4px;">{}</div>'
+        '<div style="font-family:Arial Black,Arial,sans-serif;font-size:21px;line-height:24px;font-weight:900;color:{};letter-spacing:-.4px;white-space:nowrap;">{}</div>'
         '</td><td height="118" valign="middle" style="height:118px;padding:12px 12px;font-family:Arial,Helvetica,sans-serif;text-align:left;">'
         '<div style="font-size:12px;line-height:15px;text-transform:uppercase;letter-spacing:.8px;color:#60717C;font-weight:bold;">{}</div>'
         '<div style="margin-top:5px;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:17px;line-height:21px;font-weight:900;color:#112B3E;">{}</div>'
@@ -326,10 +326,11 @@ def _matchup_results(ctx):
     def badge_html(labels, matchup=False):
         if not labels:
             return "&nbsp;"
-        return " ".join(
-            '<span style="display:inline-block;margin-left:4px;padding:2px 5px;background:#C58A2A;border:1px solid #FFFFFF;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;font-size:8px;line-height:11px;font-weight:bold;letter-spacing:.3px;white-space:nowrap;">{}</span>'.format(_e(label))
+        cells = "".join(
+            '<td nowrap="nowrap" style="padding:2px 5px;background:#C58A2A;border:1px solid #FFFFFF;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;font-size:8px;line-height:11px;font-weight:bold;letter-spacing:.3px;white-space:nowrap;">{}</td>'.format(_e(label))
             for label in labels
         )
+        return '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="right" style="border-collapse:collapse;"><tr>{}</tr></table>'.format(cells)
 
     def team_html(name):
         row = weekly_by_name.get(str(name), {})
