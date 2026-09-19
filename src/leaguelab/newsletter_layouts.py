@@ -53,14 +53,18 @@ def newsletter_type_for_week(week, regular_season_end=14, season_end=17, overrid
 # string when its source data is unavailable or the block is intentionally
 # conditional for that week.
 LAYOUTS = {
-    # Week 1: opening-week edition. No completed challenge payout leaderboard
-    # or next-challenge announcement yet.
+    # Week 1 uses the regular-season structure. Individual blocks handle the
+    # intentional Week 1 differences: League Pulse omits season-to-date measures,
+    # while Challenge Leaderboard and Next Challenge render only on even weeks.
     WEEK_1: (
         "from_commish",
         "matchup_results",
         "weekly_highlights",
         "league_pulse",
         "challenge_update",
+        "challenge_standings",
+        "challenge_leaderboard",
+        "next_challenge",
         "standings",
         "power_rankings",
         "upcoming_matchups",
