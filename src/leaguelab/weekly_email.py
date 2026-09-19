@@ -8,18 +8,93 @@ Python 3.8 compatible.
 """
 from html import escape
 
-from leaguelab.newsletter_blocks import (
-    build_matchups,
-    f,
-    movement,
-    num,
-    pct,
-    record,
-)
 from leaguelab.newsletter_layouts import blocks_for, newsletter_type_for_week
 
 
 import re
+
+
+def num(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def f(value, digits=2):
+    try:
+        return ("{: ." + str(digits) + "f}").format(float(value)).strip()
+    except (TypeError, ValueError):
+        return "-"
+
+
+def pct(value):
+    try:
+        return "{:.1f}%".format(float(value) * 100.0)
+    except (TypeError, ValueError):
+        return "-"
+
+
+def record(row):
+    w = int(num(row.get("actual_wins")))
+    l = int(num(row.get("actual_losses")))
+    t = int(num(row.get("actual_ties")))
+    return "{}-{}-{}".format(w, l, t) if t else "{}-{}".format(w, l)
+
+
+def movement(value):
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return "-"
+    return "+{}".format(n) if n > 0 else (str(n) if n < 0 else "-")
+
+
+def build_matchups(glance):
+    rankings = (glance or {}).get("weekly_rankings", [])
+    by_name = {
+        str(row.get("team_name", "")): row
+        for row in rankings
+        if row.get("team_name")
+    }
+    seen = set()
+    output = []
+
+    for row in rankings:
+        team = str(row.get("team_name", "") or "")
+        opponent = str(row.get("opponent_team_name", "") or "")
+        if not team or not opponent:
+            continue
+
+        key = tuple(sorted([team, opponent]))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        team_score = num(row.get("score"))
+        opponent_score = row.get("opponent_points")
+        if opponent_score is None or str(opponent_score).strip() == "":
+            opponent_score = by_name.get(opponent, {}).get("score")
+        opponent_score = num(opponent_score)
+
+        if team_score >= opponent_score:
+            winner, winner_score = team, team_score
+            loser, loser_score = opponent, opponent_score
+        else:
+            winner, winner_score = opponent, opponent_score
+            loser, loser_score = team, team_score
+
+        output.append({
+            "winner": winner,
+            "winner_score": winner_score,
+            "loser": loser,
+            "loser_score": loser_score,
+            "margin": abs(winner_score - loser_score),
+        })
+
+    output.sort(key=lambda item: item["winner_score"], reverse=True)
+    return output
+
 
 def _e(value):
     """Escape HTML and encode non-ASCII characters as numeric entities."""
@@ -1157,8 +1232,6 @@ def _render(name, ctx):
         "final_standings": lambda c: _standings(c, True),
         "power_rankings": _power_rankings,
         "power_rankings_final": lambda c: _power_rankings(c, True),
-        "beyond_box_score": _beyond_box_score,
-        "season_beyond_box_score": lambda c: _beyond_box_score(c, True),
         "upcoming_matchups": _upcoming_matchups,
         "league_admin": _league_admin,
         "losers_trophy": _losers_trophy,
