@@ -135,6 +135,8 @@ LAYOUTS = {
         "champion",
         "final_playoff_results",
         "toilet_bowl_winner",
+        "weekly_highlights",
+        "league_pulse",
         "challenge_winners",
         "total_payouts",
         "season_accolades",
