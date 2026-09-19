@@ -125,6 +125,7 @@ LAYOUTS = {
         "weekly_highlights",
         "league_pulse",
         "power_rankings",
+        "next_round_matchups",
         "league_admin",
     ),
 

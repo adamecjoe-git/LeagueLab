@@ -705,9 +705,10 @@ def _losers_trophy(ctx):
     if not rows:
         return ""
     loser = max(rows, key=lambda r: int(num(r.get("standings_rank"), 0)))
-    return _section("Loser's Trophy", _card_table([
-        _highlight_card("12th Place", loser.get("team_name", "-"), "Regular-season finish")
-    ], 1))
+    return _section("Loser's Trophy", _award_banner(
+        "&#127942;", "12th Place", loser.get("team_name", "-"),
+        "{} regular-season record".format(record(loser)),
+    ))
 
 
 def _next_round_cards(ctx):
@@ -755,17 +756,30 @@ def _next_round_cards(ctx):
 
         def line(team):
             proj = team.get("projected_points")
-            p = " - Proj {}".format(f(proj)) if proj is not None and num(proj) > 0 else ""
-            return "#{} {}{}".format(team.get("seed", "-"), team.get("team_name", "-"), p)
+            projection = (
+                '<div style="margin-top:3px;color:#A66D12;font-size:14px;line-height:17px;">Proj {}</div>'
+                .format(_e(f(proj))) if proj is not None and num(proj) > 0 else ""
+            )
+            standings = (ctx.get("postseason_data") or {}).get("final_standings") or []
+            season_record = team.get("record") or next((
+                row.get("record", "") for row in standings
+                if row.get("seed") == team.get("seed")
+            ), "")
+            return (
+                '<div style="font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:15px;'
+                'line-height:19px;font-weight:900;color:#112B3E;">#{} {}</div>'
+                '<div style="margin-top:2px;color:#66727C;font-size:14px;line-height:17px;">{}</div>{}'
+            ).format(_e(team.get("seed", "-")), _e(team.get("team_name", "-")),
+                     _e(season_record), projection)
 
         cards.append(
-            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-            'style="width:100%;border-collapse:collapse;background:#F7F8F8;border:1px solid #D8DEE3;">'
-            '<tr><td style="padding:12px 13px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;">'
-            '<div style="margin-bottom:5px;color:#C6923D;font-size:8px;font-weight:bold;'
-            'text-transform:uppercase;">{}</div><strong>{}</strong>'
-            '<div style="padding:4px 0;color:#66727C;font-size:10px;text-transform:uppercase;">vs</div>'
-            '<strong>{}</strong></td></tr></table>'.format(_e(label), _e(line(a)), _e(line(b)))
+            '<table role="presentation" width="100%" height="174" cellspacing="0" cellpadding="0" border="0" '
+            'style="width:100%;height:174px;border-collapse:collapse;background:#F7F8F8;border:1px solid #D8DEE3;">'
+            '<tr><td height="174" valign="middle" style="height:174px;padding:15px 16px;font-family:Arial,Helvetica,sans-serif;color:#222A30;">'
+            '<div style="margin-bottom:9px;color:#A66D12;font-size:11px;line-height:13px;font-weight:bold;'
+            'letter-spacing:.6px;text-transform:uppercase;">{}</div>{}'
+            '<div style="padding:6px 0;color:#71808A;font-size:12px;line-height:14px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;">vs</div>'
+            '{}</td></tr></table>'.format(_e(label), line(a), line(b))
         )
     return _section(
         "Next Round Matchups", _card_table(cards, 2),
@@ -784,7 +798,7 @@ def _bracket_matchup_card(item, label):
         complete = bool(winner_key)
         bg = "#F5F1E8" if winner else "#ffffff"
         weight = "font-weight:bold;" if winner else ""
-        deco = "text-decoration:line-through;color:#7A858D;" if complete and not winner else ""
+        deco = "color:#66727C;" if complete and not winner else "color:#112B3E;"
         score = team.get("score")
         proj = team.get("projected_points")
         value = f(score) if score is not None else ("Proj {}".format(f(proj)) if proj is not None and num(proj) > 0 else "")
@@ -792,9 +806,9 @@ def _bracket_matchup_card(item, label):
             '<tr><td width="34" style="padding:8px;background:{};font-family:Arial,Helvetica,sans-serif;'
             'font-size:10px;color:#66727C;{}">#{}</td>'
             '<td style="padding:8px;background:{};font-family:Arial,Helvetica,sans-serif;'
-            'font-size:11px;{}{}">{}</td>'
+            'font-size:13px;line-height:17px;{}{}">{}</td>'
             '<td width="70" align="right" style="padding:8px;background:{};'
-            'font-family:Arial,Helvetica,sans-serif;font-size:11px;{}">{}</td></tr>'
+            'font-family:Arial,Helvetica,sans-serif;font-size:13px;{}">{}</td></tr>'
         ).format(
             bg, weight, _e(team.get("seed", "-")), bg, weight, deco,
             _e(team.get("team_name", "-")), bg, weight, _e(value)
@@ -804,8 +818,8 @@ def _bracket_matchup_card(item, label):
     return (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
         'style="width:100%;border-collapse:collapse;border:1px solid #D8DEE3;background:#ffffff;">'
-        '<tr><td colspan="3" align="center" style="padding:6px 8px;background:#222A30;color:#ffffff;'
-        'font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:bold;'
+        '<tr><td colspan="3" align="center" style="padding:8px;background:#EAF0F4;color:#142B3D;border-bottom:2px solid #C6923D;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:15px;font-weight:bold;'
         'text-transform:uppercase;">{}</td></tr>{}{}</table>'
     ).format(
         _e(label),
@@ -977,25 +991,50 @@ def _toilet_bowl(ctx, title, preview=False):
         '</table>'
     ).format(semi_cards[0], final_card, semi_cards[1])
 
+    if third_place:
+        body += (
+            '<div style="margin:14px 0 7px;color:#142B3D;font-family:Arial,Helvetica,sans-serif;'
+            'font-size:13px;font-weight:bold;">11th / 12th Place Matchup</div>'
+            + _bracket_matchup_card(_toilet_item(third_place), "11th Place")
+        )
+
     subtitle = "Seeds are final regular-season standings."
     if not preview:
         subtitle += " Completed matchup winners are highlighted."
     return _section(title, body, subtitle)
 
+def _award_banner(icon, label, team_name, detail):
+    """Shared postseason award treatment; table layout also works in Outlook."""
+    return (
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="width:100%;border-collapse:collapse;background:#F5F1E8;border:1px solid #D8C49C;">'
+        '<tr><td width="110" align="center" valign="middle" style="width:110px;padding:20px 12px;'
+        'border-right:1px solid #D8C49C;font-size:64px;line-height:72px;">{}</td>'
+        '<td valign="middle" style="padding:20px;font-family:Arial,Helvetica,sans-serif;">'
+        '<div style="font-size:12px;line-height:16px;text-transform:uppercase;letter-spacing:.8px;'
+        'color:#A66D12;font-weight:bold;">{}</div>'
+        '<div style="margin-top:6px;font-family:Arial Black,Arial,sans-serif;font-size:26px;'
+        'line-height:32px;font-weight:900;color:#112B3E;">{}</div>'
+        '<div style="margin-top:9px;font-size:17px;line-height:23px;color:#52606D;">{}</div>'
+        '</td></tr></table>'
+    ).format(icon, _e(label), _e(team_name), _e(detail))
+
+
+def _winner_payout(ctx, place, champion):
+    for row in (ctx.get("postseason_data") or {}).get("league_payouts") or []:
+        if row.get("place") == place:
+            return "${:,.0f} payout".format(num(row.get("amount")))
+    if champion.get("payout") is not None:
+        return "${:,.0f} payout".format(num(champion["payout"]))
+    return "Payout not available"
+
+
 def _champion(ctx):
     champion = ((ctx.get("postseason_data") or {}).get("playoff") or {}).get("champion") or {}
     if not champion:
         return ""
-    body = (
-        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:#F5F1E8;border:1px solid #D8C49C;">'
-        '<tr><td align="center" style="padding:18px 20px;font-family:Arial,Helvetica,sans-serif;">'
-        '<div style="font-size:52px;line-height:56px;margin-bottom:8px;">&#127942;</div>'
-        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;'
-        'color:#66727C;font-weight:bold;">League Champion</div>'
-        '<div style="margin-top:5px;font-size:22px;font-weight:bold;color:#142B3D;">#{} {}</div>'
-        '</td></tr></table>'
-    ).format(_e(champion.get("seed", "-")), _e(champion.get("team_name", "-")))
+    body = _award_banner("&#127942;", "League Champion", champion.get("team_name", "-"),
+                         _winner_payout(ctx, "1st", champion))
     return _section("League Champion", body)
 
 
@@ -1003,18 +1042,9 @@ def _toilet_bowl_winner(ctx):
     champion = ((ctx.get("postseason_data") or {}).get("toilet_bowl") or {}).get("champion") or {}
     if not champion:
         return ""
-    body = (
-        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:#F5F1E8;border:1px solid #D8C49C;">'
-        '<tr><td align="center" style="padding:18px 20px;font-family:Arial,Helvetica,sans-serif;">'
-        '<div style="font-size:52px;line-height:56px;margin-bottom:8px;">&#128701;</div>'
-        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;'
-        'color:#66727C;font-weight:bold;">Toilet Bowl Champion</div>'
-        '<div style="margin-top:5px;font-size:22px;font-weight:bold;color:#142B3D;">#{} {}</div>'
-        '<div style="margin-top:5px;color:#66727C;font-size:12px;">${:.0f} payout</div>'
-        '</td></tr></table>'
-    ).format(_e(champion.get("seed", "-")), _e(champion.get("team_name", "-")), num(champion.get("payout")))
-    return _section("Toilet Bowl Champion", body)
+    body = _award_banner("&#128701;", "Toilet Bowl Winner", champion.get("team_name", "-"),
+                         _winner_payout(ctx, "Toilet Bowl", champion))
+    return _section("Toilet Bowl Winner", body)
 
 
 def _challenge_winners(ctx):

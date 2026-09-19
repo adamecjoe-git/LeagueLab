@@ -289,7 +289,7 @@ def _loser(matchup, by_key):
     return by_key.get(matchup.get("loser_key")) if matchup and matchup.get("loser_key") else None
 
 
-def _build_playoff_bracket(standings, team_rows, newsletter_week, regular_end):
+def _build_playoff_bracket(standings, team_rows, newsletter_week, regular_end, player_rows=None):
     by_seed = {int(row["seed"]): row for row in standings}
     by_key = {row["team_key"]: row for row in standings}
     scores = {
@@ -297,6 +297,15 @@ def _build_playoff_bracket(standings, team_rows, newsletter_week, regular_end):
         for key, value in _score_map(team_rows).items()
         if key[0] <= int(newsletter_week)
     }
+    # Historical placement games can lack Yahoo team totals. Reconstruct only
+    # missing totals, just as the custom Toilet Bowl does; official zeroes win.
+    virtual = build_virtual_team_scores(
+        player_rows or [],
+        range(int(regular_end) + 1, min(int(newsletter_week), int(regular_end) + 3) + 1),
+        [row["team_key"] for row in standings if int(row["seed"]) <= 8],
+    )
+    for key, value in virtual.items():
+        scores.setdefault(key, value["score"])
     projections = _projection_map(team_rows)
 
     qf_week = int(regular_end) + 1
@@ -444,7 +453,7 @@ def build_postseason_newsletter_data(season, week, analytics_result):
     standings = build_regular_season_standings(team_rows, regular_end)
 
     playoff = _build_playoff_bracket(
-        standings, team_rows, int(week), regular_end
+        standings, team_rows, int(week), regular_end, player_rows
     )
     toilet = _progressive_toilet_bowl(
         standings, team_rows, player_rows, config, int(week)
