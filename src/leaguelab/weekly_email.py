@@ -591,14 +591,16 @@ def _challenge_update(ctx, results=False):
         '</td></tr></table>'
     ).format(_e(data.get("weeks", "")), _e(data.get("prize", 10)), _e(data.get("name", "-")), _e(data.get("description", "")))
     rows = []
+    completed = bool(data.get("complete")) and int(ctx.get("week", 0)) % 2 == 0
     for row in standings[:12]:
         rank = row.get("rank", "")
+        team_label = str(row.get("team_name", "")) + ("  · Winner" if completed and str(rank) == "1" else "")
         bg = "background:#F4EBDD;" if str(rank) == "1" else ""
         rows.append(
             '<tr><td width="28" style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#52606D;">{}</td>'
             '<td style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;color:#112B3E;white-space:nowrap;overflow:hidden;">{}</td>'
             '<td width="58" align="right" style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;color:#112B3E;">{}</td></tr>'.format(
-                bg, _e(rank), bg, _e(row.get("team_name", "")), bg, _e(row.get("value", ""))
+                bg, _e(rank), bg, _e(team_label), bg, _e(row.get("value", ""))
             )
         )
     right = (
@@ -642,117 +644,21 @@ def _next_challenge(ctx):
     nxt = data.get("next_challenge") or {}
     if not isinstance(nxt, dict) or not nxt:
         return ""
-    body = _card_table([_highlight_card(
-        "Up Next", nxt.get("name", "-"),
-        "{} - ${} prize".format(nxt.get("weeks", ""), nxt.get("prize", 10))
-    )], 1)
-    if nxt.get("description"):
-        body += (
-            '<div style="margin-top:10px;padding:10px 12px;background:#F7F8F8;'
-            'border-left:3px solid #C6923D;font-family:Arial,Helvetica,sans-serif;'
-            'color:#52606D;font-size:12px;line-height:18px;">{}</div>'
-        ).format(_e(nxt["description"]))
-    return _section("Next Challenge", body)
-
-
-def _upcoming_matchups(ctx, title="Next Week's Matchups"):
-    data = ctx.get("upcoming_data") or {}
-    matchups = data.get("matchups") or []
-    cards = []
-    for index, item in enumerate(matchups):
-        a, b = item["team_a"], item["team_b"]
-        featured = index == data.get("matchup_to_watch")
-        badge = ""
-        if featured:
-            badge = '<div style="display:inline-block;margin:0 0 9px 0;padding:5px 9px;background:#C58A2A;color:#FFFFFF;font-family:Arial Black,Arial,sans-serif;font-size:11px;line-height:13px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;">MATCHUP TO WATCH</div>'
-        def team_line(team):
-            rank = "#{}".format(team["power_rank"]) if team.get("power_rank") else "#-"
-            projection = ""
-            if team.get("projected_points") is not None and num(team.get("projected_points")) > 0:
-                projection = '<div style="margin-top:3px;color:#A66D12;font-size:14px;line-height:17px;">Proj {}</div>'.format(_e(f(team.get("projected_points"))))
-            return '<div style="font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:15px;line-height:19px;font-weight:900;color:#112B3E;">{} {}</div><div style="margin-top:2px;color:#66727C;font-size:14px;line-height:17px;">{}</div>{}'.format(_e(rank), _e(team.get("team_name", "-")), _e(team.get("record", "")), projection)
-        bg = "#FBF5E9" if featured else "#F7F8F8"
-        border = "2px solid #C58A2A" if featured else "1px solid #D8DEE3"
-        cards.append(
-            '<table role="presentation" width="100%" height="174" cellspacing="0" cellpadding="0" border="0" style="width:100%;height:174px;border-collapse:collapse;background:{};border:{};">'
-            '<tr><td height="174" valign="middle" style="height:174px;padding:15px 16px;font-family:Arial,Helvetica,sans-serif;color:#222A30;">{}{}'
-            '<div style="padding:6px 0;color:#71808A;font-size:12px;line-height:14px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;">vs</div>{}</td></tr></table>'.format(bg, border, badge, team_line(a), team_line(b))
-        )
-    subtitle = "Week {} - Rank shown is LeagueLab Power Ranking".format(data.get("week", ""))
-    return _section(title, _card_table(cards, 2), subtitle)
-
-def _from_commish(ctx):
-    """Render commissioner notes as an opening editorial callout."""
-    data = ctx.get("admin_data") or {}
-    notes = data.get("notes") or data.get("items") or []
-    if isinstance(notes, str):
-        notes = [notes]
-    notes = [str(item).strip() for item in notes if str(item).strip()]
-    if not notes:
-        return ""
-
-    paragraphs = "".join(
-        '<div style="margin:{};">{}</div>'.format(
-            "0" if index == 0 else "10px 0 0 0",
-            _e(item),
-        )
-        for index, item in enumerate(notes)
-    )
     body = (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="width:100%;border-collapse:collapse;background:#F7F3EB;border-left:4px solid #C58A2A;">'
-        '<tr><td style="padding:16px 18px;font-family:Arial,Helvetica,sans-serif;color:#252A2E;'
-        'font-size:15px;line-height:23px;">{}</td></tr></table>'.format(paragraphs)
-    )
-    return _section("From the Commissioner's Desk", body)
-
-
-def _league_admin(ctx):
-    """Render bottom-of-newsletter housekeeping only; commissioner notes live at the top."""
-    data = ctx.get("admin_data") or {}
-    if not data:
-        return ""
-    dues = data.get("dues") if isinstance(data.get("dues"), dict) else data
-    pieces = []
-    if dues and ("paid_count" in dues or "unpaid_count" in dues):
-        cards = [
-            _highlight_card("Dues Paid", "{} of {}".format(dues.get("paid_count", 0), dues.get("team_count", 0)),
-                            "${:.0f} collected".format(num(dues.get("total_paid")))),
-            _highlight_card("Outstanding", dues.get("unpaid_count", 0),
-                            "${:.0f} remaining".format(num(dues.get("balance_due"))), 1),
-        ]
-        pieces.append(_card_table(cards, 2))
-        owed = dues.get("unpaid") or dues.get("unpaid_teams") or dues.get("still_owed") or []
-        if owed:
-            bubbles = []
-            for x in owed:
-                bubbles.append(
-                    '<td valign="top" style="padding:3px 4px 3px 0;">'
-                    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
-                    'style="border-collapse:separate;background:#F7F8F8;border:1px solid #D8DEE3;'
-                    'border-radius:16px;"><tr><td style="padding:8px 12px;'
-                    'font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:19px;'
-                    'color:#222A30;white-space:nowrap;">{} &#8212; ${:.0f}</td></tr></table></td>'.format(
-                        _e(x.get("team_name", "")),
-                        num(x.get("balance_due", x.get("balance", 0))),
-                    )
-                )
-            bubble_rows = []
-            for i in range(0, len(bubbles), 4):
-                cells = bubbles[i:i + 4]
-                while len(cells) < 4:
-                    cells.append('<td width="25%" style="padding:3px;">&nbsp;</td>')
-                bubble_rows.append('<tr>{}</tr>'.format("".join(cells)))
-            pieces.append(
-                '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
-                'style="margin-top:7px;border-collapse:collapse;">{}</table>'.format(
-                    "".join(bubble_rows)
-                )
-            )
-        elif dues.get("unpaid_count", 0) == 0:
-            pieces.append('<div style="margin-top:10px;">{}</div>'.format(_callout("All league dues are paid.")))
-
-    return _section("League Admin", "".join(pieces))
+        'style="width:100%;border-collapse:collapse;background:#F7F8F8;border:1px solid #DCE1E4;">'
+        '<tr><td width="88" align="center" valign="middle" style="width:88px;padding:18px 8px;'
+        'background:#F0F2F3;border-right:1px solid #DCE1E4;font-size:40px;line-height:46px;">&#127919;</td>'
+        '<td valign="middle" style="padding:17px 20px;font-family:Arial,Helvetica,sans-serif;">'
+        '<div style="font-size:12px;font-weight:bold;letter-spacing:.8px;text-transform:uppercase;color:#A66D12;">'
+        '{} &#8226; ${} prize</div>'
+        '<div style="margin-top:6px;font-family:Arial Black,Arial,sans-serif;font-size:23px;line-height:29px;'
+        'font-weight:900;color:#112B3E;">{}</div>'
+        '<div style="margin-top:9px;font-size:16px;line-height:23px;color:#52606D;">{}</div>'
+        '</td></tr></table>'
+    ).format(_e(nxt.get("weeks", "")), _e(nxt.get("prize", 10)),
+             _e(nxt.get("name", "-")), _e(nxt.get("description", "")))
+    return _section("Next Challenge", body)
 
 
 def _losers_trophy(ctx):
