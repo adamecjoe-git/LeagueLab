@@ -13,6 +13,7 @@ on:
       only_team_key: {description: "Limit preview/test to one Yahoo team key", required: false, default: "470.l.197909.t.5"}
       scheduler_test: {description: "Scheduler-only test; no Yahoo/email/SMS", required: true, default: false, type: boolean}
       real_plan_test: {description: "Evaluate saved daily plan only; no Yahoo/email/SMS", required: true, default: false, type: boolean}
+      controlled_live_test: {description: "Real Yahoo + notifications, restricted to only_team_key", required: true, default: false, type: boolean}
       test_now: {description: "ISO Central time with offset", required: false, default: ""}
       test_kickoffs: {description: "Comma-separated HH:MM kickoffs", required: false, default: ""}
       test_processed: {description: "Processed checkpoints e.g. 12:00@45", required: false, default: ""}
@@ -44,6 +45,7 @@ jobs:
           ONLY_TEAM_KEY: ${{ inputs.only_team_key }}
           SCHED_TEST: ${{ inputs.scheduler_test }}
           REAL_PLAN_TEST: ${{ inputs.real_plan_test }}
+          CONTROLLED_LIVE_TEST: ${{ inputs.controlled_live_test }}
           TEST_NOW: ${{ inputs.test_now }}
           TEST_KICKOFFS: ${{ inputs.test_kickoffs }}
           TEST_PROCESSED: ${{ inputs.test_processed }}
@@ -61,6 +63,12 @@ jobs:
               print(msg);raise SystemExit(0)
           test=os.environ.get("SCHED_TEST","false").lower()=="true"
           real_plan_test=os.environ.get("REAL_PLAN_TEST","false").lower()=="true"
+          controlled_live_test=os.environ.get("CONTROLLED_LIVE_TEST","false").lower()=="true"
+          if controlled_live_test:
+              if not os.environ.get("TEST_NOW"): raise SystemExit("controlled_live_test requires test_now")
+              if not os.environ.get("ONLY_TEAM_KEY"): raise SystemExit("controlled_live_test requires only_team_key")
+              for k,v in [("due","true"),("mode","test"),("season",os.environ["SEASON"]),("week",os.environ["WEEK"]),("only_team_key",os.environ["ONLY_TEAM_KEY"]),("checkpoint","controlled"),("kickoff_at","")]:emit(k,v)
+              raise SystemExit(0)
           if os.environ["EVENT"]=="workflow_dispatch" and not test and not real_plan_test:
               for k,v in [("due","true"),("mode",os.environ["MODE"]),("season",os.environ["SEASON"]),("week",os.environ["WEEK"]),("only_team_key",os.environ["ONLY_TEAM_KEY"]),("checkpoint","manual"),("kickoff_at","")]:emit(k,v)
               raise SystemExit(0)
@@ -211,10 +219,12 @@ jobs:
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
         run: |
           ONLY_TEAM_KEY="${{ steps.gate.outputs.only_team_key }}"
+          EXTRA_NOW=""
+          if [ "${{ inputs.controlled_live_test }}" = "true" ]; then EXTRA_NOW="--now ${{ inputs.test_now }}"; fi
           if [ -n "$ONLY_TEAM_KEY" ] && [ "${{ steps.gate.outputs.mode }}" != "live" ]; then
-            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --only-team-key "$ONLY_TEAM_KEY" --refresh-schedule --refresh-yahoo
+            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --only-team-key "$ONLY_TEAM_KEY" $EXTRA_NOW --refresh-schedule --refresh-yahoo
           else
-            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --refresh-schedule --refresh-yahoo
+            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" $EXTRA_NOW --refresh-schedule --refresh-yahoo
           fi
       - name: Save alert state
         if: always() && steps.proceed.outputs.run == 'true' && steps.gate.outputs.mode == 'live'
