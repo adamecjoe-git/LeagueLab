@@ -10,7 +10,7 @@ on:
         options: [preview, test, live]
       season: {description: "Fantasy season", required: true, default: "2026"}
       week: {description: "Fantasy week", required: true, default: "1"}
-      only_team: {description: "Limit preview/test to one team", required: false, default: "Hawk Tua Taco Viola"}
+      only_team_key: {description: "Limit preview/test to one Yahoo team key", required: false, default: "470.l.197909.t.5"}
       scheduler_test: {description: "Scheduler-only test; no Yahoo/email/SMS", required: true, default: false, type: boolean}
       real_plan_test: {description: "Evaluate saved daily plan only; no Yahoo/email/SMS", required: true, default: false, type: boolean}
       test_now: {description: "ISO Central time with offset", required: false, default: ""}
@@ -41,7 +41,7 @@ jobs:
           MODE: ${{ inputs.mode }}
           SEASON: ${{ inputs.season }}
           WEEK: ${{ inputs.week }}
-          ONLY_TEAM: ${{ inputs.only_team }}
+          ONLY_TEAM_KEY: ${{ inputs.only_team_key }}
           SCHED_TEST: ${{ inputs.scheduler_test }}
           REAL_PLAN_TEST: ${{ inputs.real_plan_test }}
           TEST_NOW: ${{ inputs.test_now }}
@@ -57,12 +57,12 @@ jobs:
           def emit(k,v):
               with O.open("a") as f:f.write("{}={}\n".format(k,v))
           def noop(msg):
-              for k,v in [("due","false"),("mode","live"),("season",""),("week",""),("only_team",""),("checkpoint",""),("kickoff_at","")]:emit(k,v)
+              for k,v in [("due","false"),("mode","live"),("season",""),("week",""),("only_team_key",""),("checkpoint",""),("kickoff_at","")]:emit(k,v)
               print(msg);raise SystemExit(0)
           test=os.environ.get("SCHED_TEST","false").lower()=="true"
           real_plan_test=os.environ.get("REAL_PLAN_TEST","false").lower()=="true"
           if os.environ["EVENT"]=="workflow_dispatch" and not test and not real_plan_test:
-              for k,v in [("due","true"),("mode",os.environ["MODE"]),("season",os.environ["SEASON"]),("week",os.environ["WEEK"]),("only_team",os.environ["ONLY_TEAM"]),("checkpoint","manual"),("kickoff_at","")]:emit(k,v)
+              for k,v in [("due","true"),("mode",os.environ["MODE"]),("season",os.environ["SEASON"]),("week",os.environ["WEEK"]),("only_team_key",os.environ["ONLY_TEAM_KEY"]),("checkpoint","manual"),("kickoff_at","")]:emit(k,v)
               raise SystemExit(0)
           if test:
               if not os.environ.get("TEST_NOW"): raise SystemExit("scheduler_test requires test_now")
@@ -104,7 +104,7 @@ jobs:
                   if key not in processed and 0<=age<300:due.append((target,k,mins))
           if not due:noop("Game day; no checkpoint due.")
           _,k,mins=min(due)
-          for a,b in [("due","true"),("mode","live"),("season",plan["season"]),("week",plan["week"]),("only_team",""),("checkpoint",mins),("kickoff_at",k.isoformat())]:emit(a,b)
+          for a,b in [("due","true"),("mode","live"),("season",plan["season"]),("week",plan["week"]),("only_team_key",""),("checkpoint",mins),("kickoff_at",k.isoformat())]:emit(a,b)
           print("DUE:",mins,"minutes before",k.isoformat())
           if test:print("SCHEDULER TEST ONLY - no Yahoo/email/SMS.")
           PY
@@ -190,6 +190,10 @@ jobs:
               lk=keys[0];teams=c.get_teams(lk)
           d=root/lk;d.mkdir(parents=True,exist_ok=True);(d/"teams.json").write_text(json.dumps(teams,indent=2))
           PY
+      - name: Sync Yahoo manager identity
+        if: steps.proceed.outputs.run == 'true'
+        env: {PYTHONPATH: "${{ github.workspace }}/src"}
+        run: python -m leaguelab.manager_config_sync --season "${{ steps.gate.outputs.season }}"
       - name: Live preflight
         if: steps.proceed.outputs.run == 'true'
         env:
@@ -206,9 +210,9 @@ jobs:
           LEAGUELAB_EMAIL_APP_PASSWORD: ${{ secrets.LEAGUELAB_EMAIL_APP_PASSWORD }}
           LEAGUELAB_TEXTBELT_API_KEY: ${{ secrets.LEAGUELAB_TEXTBELT_API_KEY }}
         run: |
-          ONLY_TEAM="${{ steps.gate.outputs.only_team }}"
-          if [ -n "$ONLY_TEAM" ] && [ "${{ steps.gate.outputs.mode }}" != "live" ]; then
-            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --only-team "$ONLY_TEAM" --refresh-schedule --refresh-yahoo
+          ONLY_TEAM_KEY="${{ steps.gate.outputs.only_team_key }}"
+          if [ -n "$ONLY_TEAM_KEY" ] && [ "${{ steps.gate.outputs.mode }}" != "live" ]; then
+            python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --only-team-key "$ONLY_TEAM_KEY" --refresh-schedule --refresh-yahoo
           else
             python -m leaguelab.roster_alert_runner --season "${{ steps.gate.outputs.season }}" --week "${{ steps.gate.outputs.week }}" --mode "${{ steps.gate.outputs.mode }}" --refresh-schedule --refresh-yahoo
           fi
