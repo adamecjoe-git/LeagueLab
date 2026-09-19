@@ -501,17 +501,49 @@ def _display_record(row):
     )
 
 
+def _latest_team_rows(ctx):
+    """Latest cumulative result per team; inactive teams retain Week 16 totals."""
+    latest = {}
+    for row in ctx.get("all_weekly_rows") or []:
+        key = str(row.get("team_key") or "")
+        if key and (key not in latest or
+                    int(num(row.get("week"))) > int(num(latest[key].get("week")))):
+            latest[key] = row
+    return latest
+
+
 def _standings(ctx, final=False):
+    if final and int(ctx.get("week", 0)) >= 17:
+        latest = _latest_team_rows(ctx)
+        postseason = ctx.get("postseason_data") or {}
+        placements = postseason.get("final_standings") or []
+        if len(placements) != 12 or len(latest) != 12:
+            raise RuntimeError(
+                "Final standings require 12 teams; got {} placements and {} "
+                "historical team records.".format(len(placements), len(latest))
+            )
+        source = []
+        for placement in placements:
+            row = latest.get(str(placement.get("team_key") or ""))
+            if row is None:
+                raise RuntimeError("Missing historical record for final standings team.")
+            merged = dict(row)
+            merged["standings_rank"] = placement.get("place", placement.get("seed"))
+            source.append(merged)
+        source.sort(key=lambda r: int(num(r.get("standings_rank"), 999)))
+    else:
+        source = ctx.get("weekly_rows", [])
     rows = [[
         _e(r.get("standings_rank", "")),
         _e(r.get("team_name", "")),
         _e(_display_record(r)),
         _e(f(r.get("points_for"))),
-        _e(movement(r.get("standings_movement"))),
+        _e(movement(r.get("standings_movement")) if not final else "-"),
         _e(r.get("current_streak", "")),
-    ] for r in ctx.get("weekly_rows", [])]
+    ] for r in source]
     return _section(
-        "Final Regular-Season Standings" if final else "Standings",
+        "Final Standings" if final and int(ctx.get("week", 0)) >= 17
+        else "Final Regular-Season Standings" if final else "Standings",
         _table(["Rank", "Team", "Record", "PF", "Move", "Streak"], rows,
                ["8%", "38%", "13%", "14%", "12%", "15%"],
                alignments=["center", "left", "center", "center", "center", "center"])
@@ -519,7 +551,7 @@ def _standings(ctx, final=False):
 
 
 def _power_rankings(ctx, final=False):
-    weekly_by_key = {str(r.get("team_key") or ""): r for r in (ctx.get("weekly_rows") or [])}
+    weekly_by_key = _latest_team_rows(ctx)
     luck_by_key = {str(r.get("team_key") or ""): r for r in (ctx.get("luck") or [])}
     sos_by_key = {str(r.get("team_key") or ""): r for r in (ctx.get("sos") or [])}
 
@@ -552,7 +584,7 @@ def _power_rankings(ctx, final=False):
     )
     if body:
         body += _note("All-Play, Luck and Opp Avg are season-to-date through this week. Power Ranking Formula: 30% season scoring - 25% all-play - 35% recent form - 10% record")
-    return _section("Final Regular-Season Power Rankings" if final else "Power Rankings", body)
+    return _section("Final Power Rankings" if final and int(ctx.get("week", 0)) >= 17 else "Final Regular-Season Power Rankings" if final else "Power Rankings", body)
 
 def _challenge_header(data):
     if not data:
