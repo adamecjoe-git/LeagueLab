@@ -450,11 +450,10 @@ def build_postseason_newsletter_data(season, week, analytics_result):
     regular_end = int(
         config.get("toilet_bowl", {}).get("regular_season_end_week", 14)
     )
-    standings = build_regular_season_standings(team_rows, regular_end)
+    from leaguelab.yahoo_postseason import load_standings, build_bracket
+    standings = load_standings(season, team_rows)
 
-    playoff = _build_playoff_bracket(
-        standings, team_rows, int(week), regular_end, player_rows
-    )
+    playoff = build_bracket(season, team_rows, standings, int(week), regular_end)
     toilet = _progressive_toilet_bowl(
         standings, team_rows, player_rows, config, int(week)
     )

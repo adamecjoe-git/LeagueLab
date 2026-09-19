@@ -2,10 +2,12 @@
 import subprocess
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from leaguelab import analytics, postseason_newsletter as postseason, weekly_email as email
 from leaguelab import season_accolades
+from leaguelab import yahoo_postseason
 from leaguelab.newsletter_layouts import blocks_for, newsletter_type_for_week
 from leaguelab.postseason import DEFAULT_POSTSEASON_CONFIG, build_regular_season_standings
 
@@ -29,10 +31,34 @@ def data_for(week, teams=None, players=None):
     default_teams, default_players = fixtures()
     teams = default_teams if teams is None else teams
     players = default_players if players is None else players
-    with patch.object(postseason, "_read_csv", side_effect=[teams, players]), patch.object(
+    standings = build_regular_season_standings(teams, 14)
+    raw = yahoo_fixture(standings, teams, players)
+    with patch.object(yahoo_postseason, "league_root", return_value=Path("/fixture")), patch.object(
+        yahoo_postseason, "read", side_effect=lambda p: raw[str(p)]
+    ), patch.object(postseason, "_read_csv", side_effect=[teams, players]), patch.object(
         postseason, "load_postseason_config", return_value=DEFAULT_POSTSEASON_CONFIG
     ):
         return postseason.build_postseason_newsletter_data(2025, week, {})
+
+
+def yahoo_fixture(standings, teams, players):
+    """Build Yahoo-shaped snapshots for deterministic offline seasons."""
+    result = {"/fixture/standings.json": {"teams": [{"team": [
+        {"team_key": r["team_key"], "name": r["team_name"]},
+        {"team_standings": dict(rank=13-r["seed"],
+            playoff_seed=str(r["seed"]) if r["seed"] <= 8 else None,
+            points_for=r["points_for"], outcome_totals={k: r[k] for k in ("wins", "losses", "ties")})}
+    ]} for r in standings]}}
+    bracket = postseason._build_playoff_bracket(standings, teams, 17, 14, players)
+    for week, matches in [(15, bracket["quarterfinals"]),
+                          (16, bracket["championship_semifinals"] + bracket["consolation_semifinals"]),
+                          (17, list(bracket["finals"].values()))]:
+        result["/fixture/weeks/week_{:02d}/scoreboard.json".format(week)] = {"matchups": [
+            {"matchup": dict(status="postevent", winner_team_key=m["winner_key"], teams=[
+                {"team": [{"team_key": m[side]["team_key"]}, {"team_points": {
+                    "week": str(week), "total": str(m[side]["score"])}}]}
+                for side in ("team_a", "team_b")])} for m in matches if m and m["complete"]]}
+    return result
 
 
 def analytics_for(week):
@@ -174,7 +200,7 @@ class PostseasonTests(unittest.TestCase):
         for row in players:
             if row["week"] == 17 and row["team_key"] == "12":
                 row["points"] = 99999
-        with patch.object(season_accolades, "_read_csv", side_effect=[players, teams]), patch.object(
+        with patch.object(yahoo_postseason, "load_standings", return_value=build_regular_season_standings(teams, 14)), patch.object(season_accolades, "_read_csv", side_effect=[players, teams]), patch.object(
             season_accolades, "_load_draft_results", return_value=[]
         ):
             awards = season_accolades.build_season_accolades(2025)

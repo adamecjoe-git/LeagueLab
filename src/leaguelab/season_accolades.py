@@ -115,8 +115,8 @@ def build_season_accolades(season):
 
     # Only the top eight regular-season teams have Week 17 matchups.
     # Preserve all teams' Weeks 1-16 performances for season-long awards.
-    from leaguelab.postseason import build_regular_season_standings
-    standings = build_regular_season_standings(teams, 14)
+    from leaguelab.yahoo_postseason import load_standings
+    standings = load_standings(season, teams)
     if len(standings) != 12:
         raise RuntimeError(
             "Cannot determine Week 17 accolade eligibility: expected 12 "

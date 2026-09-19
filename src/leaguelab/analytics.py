@@ -1923,8 +1923,8 @@ def run_weekly_analytics(season, end_week=14):
     # Derive eligibility from the regular-season playoff field, never from
     # Week 17 Yahoo scores or an already-filtered analytics result.
     if int(end_week) >= 17:
-        from leaguelab.postseason import build_regular_season_standings
-        standings = build_regular_season_standings(team_rows, 14)
+        from leaguelab.yahoo_postseason import load_standings
+        standings = load_standings(season, team_rows)
         if len(standings) != 12:
             raise RuntimeError(
                 "Cannot determine Week 17 playoff eligibility: expected 12 "

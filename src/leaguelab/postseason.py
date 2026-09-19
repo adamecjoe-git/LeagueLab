@@ -435,12 +435,8 @@ def run_toilet_bowl(
         )
     ]
 
-    standings = (
-        build_regular_season_standings(
-            team_rows,
-            regular_season_end_week,
-        )
-    )
+    from leaguelab.yahoo_postseason import load_standings
+    standings = load_standings(season, team_rows)
 
     by_seed = {
         row["seed"]: row
