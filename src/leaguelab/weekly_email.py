@@ -915,16 +915,6 @@ def _playoff_bracket(ctx, title, preview=False):
         + consolation_html
     )
 
-    if data.get("third_place"):
-        body += (
-            '<div style="margin-top:12px;margin-bottom:7px;color:#142B3D;'
-            'font-family:Arial,Helvetica,sans-serif;font-size:13px;'
-            'font-weight:bold;">11th / 12th Place Matchup</div>'
-            + _bracket_matchup_card(
-                _toilet_item(data["third_place"]), "11th Place"
-            )
-        )
-
     subtitle = "Seeds are final regular-season standings."
     if not preview:
         subtitle += " Completed matchup winners are highlighted."
@@ -955,6 +945,7 @@ def _toilet_bowl(ctx, title, preview=False):
     if not data:
         return ""
 
+    third_place = data.get("third_place")
     semis = data.get("semifinals") or []
     if not semis:
         semis = data.get("preview") or []
