@@ -1916,6 +1916,32 @@ def run_weekly_analytics(season, end_week=14):
         player_source
     )
 
+    # The Toilet Bowl ends in Week 16. Keep all historical rows, but exclude
+    # its four teams' Week 17 activity from every downstream analytics input.
+    # Derive eligibility from the regular-season playoff field, never from
+    # Week 17 Yahoo scores or an already-filtered analytics result.
+    if int(end_week) >= 17:
+        from leaguelab.postseason import build_regular_season_standings
+        standings = build_regular_season_standings(team_rows, 14)
+        if len(standings) != 12:
+            raise RuntimeError(
+                "Cannot determine Week 17 playoff eligibility: expected 12 "
+                "regular-season teams, found {}.".format(len(standings))
+            )
+        eligible = {
+            str(row["team_key"]) for row in standings if int(row["seed"]) <= 8
+        }
+        team_rows = [
+            row for row in team_rows
+            if int(to_float(row.get("week"))) != 17
+            or str(row.get("team_key") or "") in eligible
+        ]
+        player_rows = [
+            row for row in player_rows
+            if int(to_float(row.get("week"))) != 17
+            or str(row.get("team_key") or "") in eligible
+        ]
+
     all_play_rows = build_all_play_rows(
         team_rows,
         end_week=end_week,
