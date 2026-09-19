@@ -731,6 +731,14 @@ def _next_round_cards(ctx):
                 "team_b": {"seed": t.get("team_b_seed"), "team_name": t.get("team_b_name"),
                            "projected_points": t.get("team_b_projected_points")},
             }, "Toilet Bowl Final"))
+        placement = toilet.get("third_place") or {}
+        if placement:
+            items.append(({
+                "team_a": {"seed": placement.get("team_a_seed"), "team_name": placement.get("team_a_name"),
+                           "projected_points": placement.get("team_a_projected_points")},
+                "team_b": {"seed": placement.get("team_b_seed"), "team_name": placement.get("team_b_name"),
+                           "projected_points": placement.get("team_b_projected_points")},
+            }, "11th / 12th Place"))
     elif week == 16:
         finals = playoff.get("finals") or {}
         for key, label in (("championship", "Championship"), ("third_place", "3rd Place"),
@@ -906,6 +914,16 @@ def _playoff_bracket(ctx, title, preview=False):
           'letter-spacing:.6px;">Consolation / Placement Bracket</div>'
         + consolation_html
     )
+
+    if data.get("third_place"):
+        body += (
+            '<div style="margin-top:12px;margin-bottom:7px;color:#142B3D;'
+            'font-family:Arial,Helvetica,sans-serif;font-size:13px;'
+            'font-weight:bold;">11th / 12th Place Matchup</div>'
+            + _bracket_matchup_card(
+                _toilet_item(data["third_place"]), "11th Place"
+            )
+        )
 
     subtitle = "Seeds are final regular-season standings."
     if not preview:
