@@ -706,7 +706,7 @@ def _losers_trophy(ctx):
         return ""
     loser = max(rows, key=lambda r: int(num(r.get("standings_rank"), 0)))
     return _section("Loser's Trophy", _award_banner(
-        "&#127942;", "12th Place", loser.get("team_name", "-"),
+        _trophy_icon("upside-down"), "12th Place", loser.get("team_name", "-"),
         "{} regular-season record".format(record(loser)),
     ))
 
@@ -1001,6 +1001,15 @@ def _toilet_bowl(ctx, title, preview=False):
         subtitle += " Completed matchup winners are highlighted."
     return _section(title, body, subtitle)
 
+def _trophy_icon(metal):
+    # Use raster artwork rather than CSS rotation/filters for Outlook support.
+    return (
+        '<img src="https://raw.githubusercontent.com/adamecjoe-git/LeagueLab/main/'
+        'assets/newsletter/trophy-{}.png" width="90" height="108" alt="{} trophy" '
+        'style="display:block;width:90px;height:108px;border:0;">'
+    ).format(_e(metal), _e(metal.capitalize()))
+
+
 def _award_banner(icon, label, team_name, detail):
     """Shared postseason award treatment; table layout also works in Outlook."""
     return (
@@ -1031,9 +1040,23 @@ def _champion(ctx):
     champion = ((ctx.get("postseason_data") or {}).get("playoff") or {}).get("champion") or {}
     if not champion:
         return ""
-    body = _award_banner("&#127942;", "League Champion", champion.get("team_name", "-"),
+    body = _award_banner(_trophy_icon("gold"), "League Champion", champion.get("team_name", "-"),
                          _winner_payout(ctx, "1st", champion))
     return _section("League Champion", body)
+
+
+def _placement_award(ctx, place):
+    finals = ((ctx.get("postseason_data") or {}).get("playoff") or {}).get("finals") or {}
+    matchup = finals.get("championship" if place == "2nd" else "third_place") or {}
+    if not matchup.get("complete"):
+        return ""
+    name = matchup.get("loser_name" if place == "2nd" else "winner_name")
+    if not name:
+        return ""
+    title = "Second Place" if place == "2nd" else "Third Place"
+    metal = "silver" if place == "2nd" else "bronze"
+    body = _award_banner(_trophy_icon(metal), title, name, _winner_payout(ctx, place, {}))
+    return _section(title, body)
 
 
 def _toilet_bowl_winner(ctx):
@@ -1331,6 +1354,8 @@ def _render(name, ctx):
         "championship_matchup": lambda c: _upcoming_matchups(c, "Championship Matchup"),
         "next_round_matchups": _next_round_cards,
         "champion": _champion,
+        "second_place": lambda c: _placement_award(c, "2nd"),
+        "third_place": lambda c: _placement_award(c, "3rd"),
         "final_playoff_results": lambda c: _playoff_bracket(c, "Playoff Bracket", False),
         "toilet_bowl_final": lambda c: _toilet_bowl(c, "Toilet Bowl Bracket", False),
         "final_season_results": lambda c: _standings(c, True),

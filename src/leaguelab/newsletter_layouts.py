@@ -134,8 +134,9 @@ LAYOUTS = {
     POSTSEASON_WRAP: (
         "from_commish",
         "champion",
+        "second_place",
+        "third_place",
         "final_playoff_results",
-        "toilet_bowl_winner",
         "weekly_highlights",
         "league_pulse",
         "challenge_winners",

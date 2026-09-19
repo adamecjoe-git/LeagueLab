@@ -134,12 +134,28 @@ class PostseasonTests(unittest.TestCase):
         self.assertIn("$40 payout", toilet)
         self.assertNotIn("#1 ", champion)
         self.assertNotIn("#9 ", toilet)
-        self.assertLess(champion.index("&#127942;"), champion.index("Team 1"))
+        self.assertLess(champion.index("trophy-gold.png"), champion.index("Team 1"))
         trophy = email._losers_trophy(dict(weekly_rows=[dict(standings_rank=12,
             team_name="A & B", actual_wins=3, actual_losses=10, actual_ties=1)]))
         self.assertIn("3-10-1 regular-season record", trophy)
         self.assertIn("A &amp; B", trophy)
         self.assertIn("font-size:64px", trophy)
+        self.assertIn("trophy-upside-down.png", trophy)
+
+    def test_final_podium_replaces_toilet_winner_only_in_week17(self):
+        ctx = dict(week=17, postseason_data=data_for(17))
+        for place, name, amount, metal in [("2nd", "Team 2", 100, "silver"),
+                                         ("3rd", "Team 3", 40, "bronze")]:
+            html = email._placement_award(ctx, place)
+            self.assertIn(name, html)
+            self.assertIn("${} payout".format(amount), html)
+            self.assertIn("trophy-{}.png".format(metal), html)
+        final_blocks = blocks_for(newsletter_type_for_week(17))
+        self.assertNotIn("toilet_bowl_winner", final_blocks)
+        self.assertIn("second_place", final_blocks)
+        self.assertIn("third_place", final_blocks)
+        self.assertIn("toilet_bowl_winner", blocks_for(newsletter_type_for_week(16)))
+        self.assertEqual(email._placement_award(dict(postseason_data=data_for(16)), "2nd"), "")
 
     def test_final_power_and_standings_retain_all_twelve_teams(self):
         result = analytics_for(17)
