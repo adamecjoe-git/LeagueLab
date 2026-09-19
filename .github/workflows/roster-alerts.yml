@@ -14,6 +14,7 @@ on:
       scheduler_test: {description: "Scheduler-only test; no Yahoo/email/SMS", required: true, default: false, type: boolean}
       real_plan_test: {description: "Evaluate saved daily plan only; no Yahoo/email/SMS", required: true, default: false, type: boolean}
       controlled_live_test: {description: "Real Yahoo + notifications, restricted to only_team_key", required: true, default: false, type: boolean}
+      persistence_test: {description: "Test cross-run scheduler state using isolated artifact", required: true, default: false, type: boolean}
       test_now: {description: "ISO Central time with offset", required: false, default: ""}
       test_kickoffs: {description: "Comma-separated HH:MM kickoffs", required: false, default: ""}
       test_processed: {description: "Processed checkpoints e.g. 12:00@45", required: false, default: ""}
@@ -46,6 +47,7 @@ jobs:
           SCHED_TEST: ${{ inputs.scheduler_test }}
           REAL_PLAN_TEST: ${{ inputs.real_plan_test }}
           CONTROLLED_LIVE_TEST: ${{ inputs.controlled_live_test }}
+          PERSISTENCE_TEST: ${{ inputs.persistence_test }}
           TEST_NOW: ${{ inputs.test_now }}
           TEST_KICKOFFS: ${{ inputs.test_kickoffs }}
           TEST_PROCESSED: ${{ inputs.test_processed }}
@@ -64,12 +66,30 @@ jobs:
           test=os.environ.get("SCHED_TEST","false").lower()=="true"
           real_plan_test=os.environ.get("REAL_PLAN_TEST","false").lower()=="true"
           controlled_live_test=os.environ.get("CONTROLLED_LIVE_TEST","false").lower()=="true"
-          if controlled_live_test:
+          persistence_test=os.environ.get("PERSISTENCE_TEST","false").lower()=="true"
+          if persistence_test:
+              if not os.environ.get("TEST_NOW"): raise SystemExit("persistence_test requires test_now")
+              now=datetime.fromisoformat(os.environ["TEST_NOW"])
+              groups=[]
+              for s in filter(None,[x.strip() for x in os.environ.get("TEST_KICKOFFS","").split(",")]):
+                  h,m=map(int,s.split(":")); k=now.replace(hour=h,minute=m,second=0,microsecond=0)
+                  groups.append({"kickoff_at":k.isoformat(),"games":[]})
+              if not groups: raise SystemExit("persistence_test requires test_kickoffs")
+              plan={"date":now.date().isoformat(),"games_today":True,"season":int(os.environ["SEASON"]),"week":int(os.environ["WEEK"]),"kickoff_groups":groups}
+              processed=set()
+              sd=Path("/tmp/persistence_state");subprocess.run(["rm","-rf",str(sd)]);sd.mkdir()
+              rr=subprocess.run(["gh","run","download","-n","leaguelab-scheduler-persistence-test","-D",str(sd)],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+              if rr.returncode==0:
+                  ms=list(sd.rglob("scheduler_state.json"))
+                  if ms:
+                      st=json.loads(ms[0].read_text())
+                      if st.get("date")==now.date().isoformat(): processed=set(st.get("processed") or [])
+          elif controlled_live_test:
               if not os.environ.get("TEST_NOW"): raise SystemExit("controlled_live_test requires test_now")
               if not os.environ.get("ONLY_TEAM_KEY"): raise SystemExit("controlled_live_test requires only_team_key")
               for k,v in [("due","true"),("mode","test"),("season",os.environ["SEASON"]),("week",os.environ["WEEK"]),("only_team_key",os.environ["ONLY_TEAM_KEY"]),("checkpoint","controlled"),("kickoff_at","")]:emit(k,v)
               raise SystemExit(0)
-          if os.environ["EVENT"]=="workflow_dispatch" and not test and not real_plan_test:
+          if os.environ["EVENT"]=="workflow_dispatch" and not test and not real_plan_test and not persistence_test:
               for k,v in [("due","true"),("mode",os.environ["MODE"]),("season",os.environ["SEASON"]),("week",os.environ["WEEK"]),("only_team_key",os.environ["ONLY_TEAM_KEY"]),("checkpoint","manual"),("kickoff_at","")]:emit(k,v)
               raise SystemExit(0)
           if test:
@@ -84,7 +104,7 @@ jobs:
               for s in filter(None,[x.strip() for x in os.environ.get("TEST_PROCESSED","").split(",")]):
                   clock,mins=s.split("@");h,m=map(int,clock.split(":"));k=now.replace(hour=h,minute=m,second=0,microsecond=0)
                   processed.add("{}@{}".format(k.isoformat(),mins))
-          else:
+          elif not persistence_test:
               now=datetime.now().astimezone()
               if now.hour<7 or now.hour>=22: noop("Outside 7 AM-10 PM Central; successful no-op.")
               d=Path("/tmp/plan");subprocess.run(["rm","-rf",str(d)]);d.mkdir()
@@ -126,15 +146,47 @@ jobs:
           for a,b in [("due","true"),("mode","live"),("season",plan["season"]),("week",plan["week"]),("only_team_key",""),("checkpoint",mins),("kickoff_at",k.isoformat())]:emit(a,b)
           print("DUE:",mins,"minutes before",k.isoformat())
           if test:print("SCHEDULER TEST ONLY - no Yahoo/email/SMS.")
+          if persistence_test:print("PERSISTENCE TEST - isolated state; no Yahoo/email/SMS.")
           PY
       - name: Scheduler test result
-        if: inputs.scheduler_test == true || inputs.real_plan_test == true
+        if: inputs.scheduler_test == true || inputs.real_plan_test == true || inputs.persistence_test == true
         run: |
           echo "Due=${{ steps.gate.outputs.due }}"
           echo "Checkpoint=${{ steps.gate.outputs.checkpoint }}"
           echo "Kickoff=${{ steps.gate.outputs.kickoff_at }}"
+      - name: Mark isolated persistence checkpoint
+        if: inputs.persistence_test == true && steps.gate.outputs.due == 'true'
+        env:
+          KICKOFF: ${{ steps.gate.outputs.kickoff_at }}
+          CHECKPOINT: ${{ steps.gate.outputs.checkpoint }}
+          TEST_NOW: ${{ inputs.test_now }}
+        run: |
+          mkdir -p data/state/persistence_test
+          python - <<'PY'
+          import json,os
+          from datetime import datetime
+          from pathlib import Path
+          p=Path("data/state/persistence_test/scheduler_state.json")
+          st={"date":datetime.fromisoformat(os.environ["TEST_NOW"]).date().isoformat(),"processed":[]}
+          old=list(Path("/tmp/persistence_state").rglob("scheduler_state.json"))
+          if old:
+              x=json.loads(old[0].read_text())
+              if x.get("date")==st["date"]: st=x
+          key="{}@{}".format(os.environ["KICKOFF"],os.environ["CHECKPOINT"])
+          done=set(st.get("processed") or []);done.add(key);st["processed"]=sorted(done)
+          p.write_text(json.dumps(st,indent=2))
+          print("Saved isolated processed checkpoint:",key)
+          PY
+      - name: Save isolated persistence state
+        if: inputs.persistence_test == true && steps.gate.outputs.due == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaguelab-scheduler-persistence-test
+          path: data/state/persistence_test/scheduler_state.json
+          retention-days: 1
+          overwrite: true
       - name: Restore config
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true && inputs.persistence_test != true
         env:
           MANAGERS_JSON: ${{ secrets.LEAGUELAB_MANAGERS_JSON }}
           NOTIFICATIONS_JSON: ${{ secrets.LEAGUELAB_NOTIFICATIONS_JSON }}
@@ -143,11 +195,11 @@ jobs:
           printf '%s' "$MANAGERS_JSON" > data/config/managers.json
           printf '%s' "$NOTIFICATIONS_JSON" > data/config/notifications.json
       - name: Install dependencies
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true && inputs.persistence_test != true
         run: pip install -r requirements.txt
       - name: Recheck live NFL schedule
         id: live
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true && github.event_name != 'workflow_dispatch'
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true && inputs.persistence_test != true && github.event_name != 'workflow_dispatch'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
           EXPECTED: ${{ steps.gate.outputs.kickoff_at }}
@@ -173,7 +225,7 @@ jobs:
           PY
       - name: Decide production handoff
         id: proceed
-        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true
+        if: steps.gate.outputs.due == 'true' && inputs.scheduler_test != true && inputs.real_plan_test != true && inputs.persistence_test != true
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ steps.live.outputs.proceed }}" = "true" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
       - name: Install Playwright Chromium
