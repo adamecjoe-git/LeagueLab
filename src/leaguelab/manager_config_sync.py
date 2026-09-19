@@ -171,14 +171,10 @@ def has_meaningful_private_data(record):
     return False
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Sync human-readable Yahoo manager identity into private LeagueLab contact config."
-    )
-    parser.add_argument("--season", type=int, required=True)
-    args = parser.parse_args()
-
-    teams_path = find_league_dir(args.season) / "teams.json"
+def sync_manager_config(season):
+    """Merge current Yahoo manager/team identity into private contact config."""
+    season = int(season)
+    teams_path = find_league_dir(season) / "teams.json"
     if not teams_path.exists():
         raise FileNotFoundError("Missing {}".format(teams_path))
 
@@ -199,7 +195,7 @@ def main():
             "manager_name": identity.get("manager_name", ""),
             "team_name": identity.get("team_name", ""),
             "team_key": identity.get("team_key", ""),
-            "active_season": args.season,
+            "active_season": season,
             "email": old.get("email", ""),
             "notification_email": old.get("notification_email", ""),
             "phone": old.get("phone", ""),
@@ -243,7 +239,7 @@ def main():
     print("")
 
     for guid, item in merged.items():
-        status = "active" if item.get("active_season") == args.season else "inactive"
+        status = "active" if item.get("active_season") == season else "inactive"
         print(
             "{} / {} / {} [{}]".format(
                 item.get("manager_name") or "Unknown manager",
@@ -252,6 +248,15 @@ def main():
                 guid,
             )
         )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Sync human-readable Yahoo manager identity into private LeagueLab contact config."
+    )
+    parser.add_argument("--season", type=int, required=True)
+    args = parser.parse_args()
+    sync_manager_config(args.season)
 
 
 if __name__ == "__main__":
