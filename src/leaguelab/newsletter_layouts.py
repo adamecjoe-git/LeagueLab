@@ -1,9 +1,10 @@
 """LeagueLab newsletter layout selection. Python 3.8 compatible.
 
-This file is the specification for which modular newsletter blocks appear and
-in what order. Renderers should not duplicate layout decisions.
+This file is the authoritative specification for which modular newsletter
+blocks appear and in what order.
 """
 
+WEEK_1 = "week_1"
 REGULAR_SEASON = "regular_season"
 REGULAR_SEASON_FINAL = "regular_season_final"
 PLAYOFFS = "playoffs"
@@ -14,10 +15,12 @@ POSTSEASON_WRAP = "postseason_wrap"
 def newsletter_type_for_week(week, regular_season_end=14, season_end=17, override=None):
     if override:
         valid = {
+            WEEK_1,
             REGULAR_SEASON,
             REGULAR_SEASON_FINAL,
             PLAYOFFS,
             CHAMPIONSHIP,
+            POSTSEASON_WRAP,
         }
         if override not in valid:
             raise ValueError("Unknown newsletter type: {}".format(override))
@@ -27,26 +30,46 @@ def newsletter_type_for_week(week, regular_season_end=14, season_end=17, overrid
     regular_season_end = int(regular_season_end)
     season_end = int(season_end)
 
-    if week < regular_season_end:
+    if week == 1:
+        return WEEK_1
+    if 2 <= week < regular_season_end:
         return REGULAR_SEASON
     if week == regular_season_end:
         return REGULAR_SEASON_FINAL
-    if week < season_end:
+    if regular_season_end < week < season_end:
         return PLAYOFFS
     if week == season_end:
         return CHAMPIONSHIP
+    if week == season_end + 1:
+        return POSTSEASON_WRAP
     raise ValueError(
-        "Week {} is after the configured season end (Week {}). "
-        "Week {} is the final newsletter.".format(
-            week, season_end, season_end
+        "Week {} is outside the configured newsletter season (Weeks 1-{}).".format(
+            week, season_end + 1
         )
     )
 
 
-# The order here is the newsletter specification. Individual blocks may return
-# an empty string when their source data is not available.
+# Every visible newsletter section belongs here. A block may return an empty
+# string when its source data is unavailable or the block is intentionally
+# conditional for that week.
 LAYOUTS = {
+    # Week 1: opening-week edition. No completed challenge payout leaderboard
+    # or next-challenge announcement yet.
+    WEEK_1: (
+        "from_commish",
+        "matchup_results",
+        "weekly_highlights",
+        "league_pulse",
+        "challenge_update",
+        "standings",
+        "power_rankings",
+        "upcoming_matchups",
+        "league_admin",
+    ),
+
+    # Weeks 2-13: normal regular-season newsletter.
     REGULAR_SEASON: (
+        "from_commish",
         "matchup_results",
         "weekly_highlights",
         "league_pulse",
@@ -59,7 +82,10 @@ LAYOUTS = {
         "upcoming_matchups",
         "league_admin",
     ),
+
+    # Week 14: final regular-season results plus postseason setup.
     REGULAR_SEASON_FINAL: (
+        "from_commish",
         "matchup_results",
         "weekly_highlights",
         "league_pulse",
@@ -74,7 +100,10 @@ LAYOUTS = {
         "next_round_matchups",
         "league_admin",
     ),
+
+    # Weeks 15-16: postseason progress and the next round.
     PLAYOFFS: (
+        "from_commish",
         "playoff_results",
         "toilet_bowl",
         "weekly_highlights",
@@ -83,16 +112,32 @@ LAYOUTS = {
         "next_round_matchups",
         "league_admin",
     ),
+
+    # Week 17: championship / Toilet Bowl winner edition.
     CHAMPIONSHIP: (
+        "from_commish",
         "champion",
+        "toilet_bowl_winner",
+        "playoff_results",
+        "toilet_bowl",
+        "weekly_highlights",
+        "league_pulse",
+        "power_rankings",
+        "league_admin",
+    ),
+
+    # Week 18: final season wrap-up. This is season-level material rather than
+    # another weekly matchup edition.
+    POSTSEASON_WRAP: (
+        "from_commish",
+        "champion",
+        "final_playoff_results",
+        "toilet_bowl_winner",
         "challenge_winners",
         "total_payouts",
         "season_accolades",
-        "playoff_results",
-        "toilet_bowl_winner",
-        "toilet_bowl",
-        "weekly_highlights",
-        "power_rankings",
+        "final_season_results",
+        "power_rankings_final",
         "league_admin",
     ),
 }
