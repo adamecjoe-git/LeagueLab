@@ -416,6 +416,14 @@ def main():
         ),
     )
     parser.add_argument(
+        "--only-team-key",
+        default=None,
+        help=(
+            "Preview/test safety filter: process only the exact Yahoo team key. "
+            "Prefer this over --only-team because team names can change."
+        ),
+    )
+    parser.add_argument(
         "--simulate-yahoo-failure",
         action="store_true",
         help=(
@@ -430,6 +438,10 @@ def main():
     if args.only_team and mode == "live":
         raise RuntimeError(
             "--only-team is a preview/test safety filter and cannot be used in live mode."
+        )
+    if args.only_team_key and mode == "live":
+        raise RuntimeError(
+            "--only-team-key is a preview/test safety filter and cannot be used in live mode."
         )
     if args.simulate_yahoo_failure and mode == "live":
         raise RuntimeError(
@@ -565,6 +577,11 @@ def main():
         if args.only_team:
             actual_team = str(alert.get("team_name", "") or "").strip()
             if actual_team != str(args.only_team).strip():
+                continue
+
+        if args.only_team_key:
+            actual_team_key = str(alert.get("team_key", "") or "").strip()
+            if actual_team_key != str(args.only_team_key).strip():
                 continue
 
         if not alert["has_alert"]:
