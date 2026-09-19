@@ -213,6 +213,7 @@ def _highlight_card(label, value, detail="", column=0):
             "Biggest Blowout": "MARGIN", "Closest Matchup": "CLOSE",
             "Biggest Lineup Miss": "MISS", "Challenge": "HOT",
             "Up Next": "NEXT", "Dues Paid": "PAID", "Outstanding": "DUE",
+            "12th Place": "🏆",
         }.get(str(label), "STAT")
     # Lineup efficiency cards are percentage metrics. Keep the % on the
     # large measure and do not repeat "efficient" beneath the team name.
@@ -222,6 +223,7 @@ def _highlight_card(label, value, detail="", column=0):
         if secondary.lower() == "efficient":
             secondary = ""
     stat_color = "#A66D12" if str(label) == "High Score" else accent
+    stat_transform = "display:inline-block;transform:rotate(180deg);" if str(label) == "12th Place" else ""
     secondary_html = ''
     if secondary:
         secondary_html = '<div style="margin-top:5px;color:#60717C;font-size:12px;line-height:16px;">{}</div>'.format(_e(secondary))
@@ -229,13 +231,13 @@ def _highlight_card(label, value, detail="", column=0):
         '<table role="presentation" width="100%" height="118" cellspacing="0" cellpadding="0" border="0" '
         'style="width:100%;height:118px;border-collapse:collapse;background:#F7F8F8;border:1px solid #DCE1E4;">'
         '<tr><td width="78" height="118" align="center" valign="middle" style="width:78px;height:118px;padding:0 7px;background:#F0F2F3;border-right:1px solid #DCE1E4;">'
-        '<div style="font-family:Arial Black,Arial,sans-serif;font-size:21px;line-height:24px;font-weight:900;color:{};letter-spacing:-.4px;white-space:nowrap;">{}</div>'
+        '<div style="font-family:Arial Black,Arial,sans-serif;font-size:21px;line-height:24px;font-weight:900;color:{};letter-spacing:-.4px;white-space:nowrap;{}">{}</div>'
         '</td><td height="118" valign="middle" style="height:118px;padding:12px 12px;font-family:Arial,Helvetica,sans-serif;text-align:left;">'
         '<div style="font-size:12px;line-height:15px;text-transform:uppercase;letter-spacing:.8px;color:#60717C;font-weight:bold;">{}</div>'
         '<div style="margin-top:5px;font-family:Arial Black,Arial,Helvetica,sans-serif;font-size:17px;line-height:21px;font-weight:900;color:#112B3E;">{}</div>'
         '{}'
         '</td></tr></table>'
-    ).format(stat_color, _e(stat), _e(label), _e(value), secondary_html)
+    ).format(stat_color, stat_transform, _e(stat), _e(label), _e(value), secondary_html)
 
 def _note(text):
     return (
