@@ -1318,11 +1318,9 @@ def build_weekly_email_html(
         "postseason_wrap": "Season Wrap-Up",
     }
 
-    # Open with the commissioner message immediately below the newsletter header.
-    # League Admin remains at the bottom for dues/housekeeping and does not repeat notes.
-    content_parts = [_from_commish(ctx)]
-    content_parts.extend(_render(name, ctx) for name in blocks_for(ntype))
-    content = "".join(content_parts)
+    # Every visible section, including the commissioner message, is controlled
+    # by the selected newsletter layout.
+    content = "".join(_render(name, ctx) for name in blocks_for(ntype))
 
     # Keep the same 900px canvas that proved reliable in the preseason email.
     return (
