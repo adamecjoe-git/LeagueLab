@@ -1496,13 +1496,15 @@ def build_power_rankings(
 
     latest = {}
 
+    # Each team's most recent eligible week is its season endpoint.
+    # Toilet Bowl teams finish in Week 16; do not replace their cumulative
+    # records with empty Week 17 placeholders.
     for row in weekly_analytics_rows:
-        if int(row["week"]) != end_week:
+        if int(row["week"]) > end_week:
             continue
-
-        latest[
-            row["team_key"]
-        ] = row
+        key = row["team_key"]
+        if key not in latest or int(row["week"]) > int(latest[key]["week"]):
+            latest[key] = row
 
     all_play_pct = {}
     actual_win_pct = {}
