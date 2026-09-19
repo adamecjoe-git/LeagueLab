@@ -113,6 +113,29 @@ def build_season_accolades(season):
     if not players:
         return []
 
+    # Only the top eight regular-season teams have Week 17 matchups.
+    # Preserve all teams' Weeks 1-16 performances for season-long awards.
+    from leaguelab.postseason import build_regular_season_standings
+    standings = build_regular_season_standings(teams, 14)
+    if len(standings) != 12:
+        raise RuntimeError(
+            "Cannot determine Week 17 accolade eligibility: expected 12 "
+            "regular-season teams, found {}.".format(len(standings))
+        )
+    eligible = {
+        str(row["team_key"]) for row in standings if int(row["seed"]) <= 8
+    }
+    players = [
+        row for row in players
+        if int(_num(row.get("week"))) != 17
+        or str(row.get("team_key") or "") in eligible
+    ]
+    teams = [
+        row for row in teams
+        if int(_num(row.get("week"))) != 17
+        or str(row.get("team_key") or "") in eligible
+    ]
+
     output = []
 
     # Regular-season MVP: total player fantasy points, Weeks 1-14.
@@ -123,6 +146,7 @@ def build_season_accolades(season):
             "icon": "🏆",
             "title": "Regular-Season MVP",
             "winner": winner["player_name"],
+            "team_name": winner["team_name"],
             "detail": "{:.2f} pts • Weeks 1-14".format(winner["points"]),
         })
 
@@ -134,6 +158,7 @@ def build_season_accolades(season):
             "icon": "🔥",
             "title": "Playoff MVP",
             "winner": winner["player_name"],
+            "team_name": winner["team_name"],
             "detail": "{:.2f} starter pts • Weeks 15-17".format(
                 winner["points"]
             ),
@@ -167,6 +192,7 @@ def build_season_accolades(season):
             "icon": "💎",
             "title": "Best Draft Pick",
             "winner": winner["player_name"],
+            "team_name": winner["team_name"],
             "detail": "Pick #{} • {:.2f} regular-season pts".format(
                 winner["pick"], winner["points"]
             ),
@@ -189,6 +215,7 @@ def build_season_accolades(season):
             "icon": "🛒",
             "title": "Waiver Pickup of the Year",
             "winner": winner["player_name"],
+            "team_name": winner["team_name"],
             "detail": "{:.2f} starter pts • {} starts".format(
                 winner["points"], winner["starts"]
             ),
