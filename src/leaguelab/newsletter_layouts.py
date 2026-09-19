@@ -36,15 +36,15 @@ def newsletter_type_for_week(week, regular_season_end=14, season_end=17, overrid
         return REGULAR_SEASON
     if week == regular_season_end:
         return REGULAR_SEASON_FINAL
-    if regular_season_end < week < season_end:
+    if regular_season_end < week < season_end - 1:
         return PLAYOFFS
-    if week == season_end:
+    if week == season_end - 1:
         return CHAMPIONSHIP
-    if week == season_end + 1:
+    if week == season_end:
         return POSTSEASON_WRAP
     raise ValueError(
         "Week {} is outside the configured newsletter season (Weeks 1-{}).".format(
-            week, season_end + 1
+            week, season_end
         )
     )
 
@@ -103,7 +103,7 @@ LAYOUTS = {
         "league_admin",
     ),
 
-    # Weeks 15-16: postseason progress and the next round.
+    # Week 15: postseason progress and the next round.
     PLAYOFFS: (
         "from_commish",
         "playoff_results",
@@ -115,7 +115,7 @@ LAYOUTS = {
         "league_admin",
     ),
 
-    # Week 17: championship / Toilet Bowl winner edition.
+    # Week 16: Toilet Bowl winner / championship-preview edition.
     CHAMPIONSHIP: (
         "from_commish",
         "champion",
@@ -128,7 +128,7 @@ LAYOUTS = {
         "league_admin",
     ),
 
-    # Week 18: final season wrap-up. This is season-level material rather than
+    # Week 17: final season newsletter. This is season-level material rather than
     # another weekly matchup edition.
     POSTSEASON_WRAP: (
         "from_commish",
