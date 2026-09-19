@@ -594,13 +594,20 @@ def _challenge_update(ctx, results=False):
     completed = bool(data.get("complete")) and int(ctx.get("week", 0)) % 2 == 0
     for row in standings[:12]:
         rank = row.get("rank", "")
-        team_label = str(row.get("team_name", "")) + ("  · Winner" if completed and str(rank) == "1" else "")
+        winner_badge = (
+            ' <span style="display:inline-block;padding:2px 5px;background:#C58A2A;'
+            'border:1px solid #FFFFFF;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;'
+            'font-size:8px;line-height:11px;font-weight:bold;letter-spacing:.3px;'
+            'white-space:nowrap;">WINNER</span>'
+            if completed and str(rank) == "1" else ""
+        )
+        team_label = _e(row.get("team_name", "")) + winner_badge
         bg = "background:#F4EBDD;" if str(rank) == "1" else ""
         rows.append(
             '<tr><td width="28" style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#52606D;">{}</td>'
             '<td style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;color:#112B3E;white-space:nowrap;overflow:hidden;">{}</td>'
             '<td width="58" align="right" style="padding:4px 5px;{}border-bottom:1px solid #E1E5E8;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;color:#112B3E;">{}</td></tr>'.format(
-                bg, _e(rank), bg, _e(team_label), bg, _e(row.get("value", ""))
+                bg, _e(rank), bg, team_label, bg, _e(row.get("value", ""))
             )
         )
     right = (
