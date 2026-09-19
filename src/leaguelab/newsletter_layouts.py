@@ -1,4 +1,8 @@
-"""LeagueLab newsletter layout selection. Python 3.8 compatible."""
+"""LeagueLab newsletter layout selection. Python 3.8 compatible.
+
+This file is the specification for which modular newsletter blocks appear and
+in what order. Renderers should not duplicate layout decisions.
+"""
 
 REGULAR_SEASON = "regular_season"
 REGULAR_SEASON_FINAL = "regular_season_final"
@@ -39,8 +43,12 @@ def newsletter_type_for_week(week, regular_season_end=14, season_end=17, overrid
     )
 
 
-# The order here is the newsletter specification.  Individual blocks are
-# allowed to return an empty string when their source data is not available.
+# The order here is the newsletter specification. Individual blocks may return
+# an empty string when their source data is not available.
+#
+# Note: League Pulse is currently emitted by the email renderer immediately
+# after weekly_highlights. That remaining renderer-side layout decision will be
+# moved here when the six final newsletter templates are defined.
 LAYOUTS = {
     REGULAR_SEASON: (
         "matchup_results",
@@ -51,7 +59,6 @@ LAYOUTS = {
         "next_challenge",
         "standings",
         "power_rankings",
-        "beyond_box_score",
         "upcoming_matchups",
         "league_admin",
     ),
@@ -64,7 +71,6 @@ LAYOUTS = {
         "final_standings",
         "losers_trophy",
         "power_rankings_final",
-        "beyond_box_score",
         "playoff_preview",
         "toilet_bowl_preview",
         "next_round_matchups",
@@ -75,7 +81,6 @@ LAYOUTS = {
         "toilet_bowl",
         "weekly_highlights",
         "power_rankings",
-        "beyond_box_score",
         "next_round_matchups",
         "league_admin",
     ),
@@ -89,10 +94,8 @@ LAYOUTS = {
         "toilet_bowl",
         "weekly_highlights",
         "power_rankings",
-        "beyond_box_score",
         "league_admin",
     ),
-
 }
 
 
