@@ -1214,6 +1214,7 @@ def _generic_postseason(ctx, key, title):
 
 def _render(name, ctx):
     mapping = {
+        "from_commish": _from_commish,
         "matchup_results": _matchup_results,
         "weekly_highlights": _weekly_highlights,
         "league_pulse": _league_pulse,
@@ -1308,6 +1309,7 @@ def build_weekly_email_html(
     }
 
     labels = {
+        "week_1": "Opening Week",
         "regular_season": "Regular Season",
         "regular_season_final": "Regular Season Finale",
         "playoffs": "Playoffs",
