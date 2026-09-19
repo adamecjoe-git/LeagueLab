@@ -16,6 +16,8 @@ import json
 import sys
 from pathlib import Path
 
+from leaguelab.manager_config_sync import sync_manager_config
+
 from leaguelab.yahoo.client import (
     DATA_DIR,
     YahooFantasyClient,
@@ -471,6 +473,11 @@ def refresh_yahoo(season, mode, week=None, league_key=None, max_week=DEFAULT_MAX
     ))
     print("Team rosters updated: {}".format(result["rosters_updated"]))
     print("Player files updated: {}".format(result["players_updated"]))
+
+    # Yahoo owns mutable manager/team identity; LeagueLab owns private contact
+    # details and notification preferences. Merge the refreshed identity into
+    # managers.json after every successful refresh so team renames are automatic.
+    sync_manager_config(season)
 
     return result
 
