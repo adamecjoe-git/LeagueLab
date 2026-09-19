@@ -283,6 +283,7 @@ def build_challenge_newsletter_data(season, week):
     winner = standings[0] if complete and standings else None
 
     payouts = defaultdict(float)
+    challenge_wins = defaultdict(int)
     winners = []
     for definition in CHALLENGES:
         if week < definition["end"]:
@@ -290,6 +291,7 @@ def build_challenge_newsletter_data(season, week):
         result = _score_challenge(definition, team_rows, player_rows, definition["end"])
         if result:
             payouts[result[0]["team_name"]] += definition["prize"]
+            challenge_wins[result[0]["team_name"]] += 1
             winners.append({
                 "name": definition["name"],
                 "weeks": "Weeks {}-{}".format(definition["start"], definition["end"]),
@@ -303,6 +305,7 @@ def build_challenge_newsletter_data(season, week):
     season_complete = week >= SEASON_SCORING["end"]
     if season_complete and season_result:
         payouts[season_result[0]["team_name"]] += SEASON_SCORING["prize"]
+        challenge_wins[season_result[0]["team_name"]] += 1
         winners.append({
             "name": SEASON_SCORING["name"],
             "weeks": "Weeks 1-14",
@@ -311,7 +314,7 @@ def build_challenge_newsletter_data(season, week):
         })
 
     payout_rows = [
-        {"team_name": team, "amount": amount}
+        {"team_name": team, "amount": amount, "challenge_wins": challenge_wins[team]}
         for team, amount in sorted(
             payouts.items(), key=lambda item: (-item[1], item[0].lower())
         )
