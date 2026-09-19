@@ -1094,6 +1094,10 @@ def _season_accolades(ctx):
         title = _e(award.get("title", ""))
         winner = _e(award.get("winner", "-"))
         detail = _e(award.get("detail", ""))
+        if award.get("team_name"):
+            detail = '<strong>{}</strong> &#8226; {}'.format(
+                _e(award["team_name"]), detail
+            )
         palettes = (
             ("#F7F8F8", "#C6923D"),
             ("#F7F8F8", "#142B3D"),
