@@ -106,10 +106,21 @@ jobs:
           due=[]
           for g in plan.get("kickoff_groups",[]):
               k=datetime.fromisoformat(g["kickoff_at"]).astimezone(now.tzinfo)
-              for mins in (45,10):
-                  key="{}@{}".format(k.isoformat(),mins)
-                  target=k-timedelta(minutes=mins);age=(now-target).total_seconds()
-                  if key not in processed and 0<=age<300:due.append((target,k,mins))
+              if now>=k:
+                  continue
+              # A checkpoint remains eligible after its nominal time instead of
+              # expiring after five minutes. Once T-10 is reached it supersedes
+              # a missed T-45, so a delayed Actions runner sends one useful alert
+              # rather than replaying stale checkpoints.
+              mins=None
+              if now>=k-timedelta(minutes=10):
+                  if "{}@10".format(k.isoformat()) not in processed:
+                      mins=10
+              elif now>=k-timedelta(minutes=45):
+                  if "{}@45".format(k.isoformat()) not in processed:
+                      mins=45
+              if mins is not None:
+                  due.append((k-timedelta(minutes=mins),k,mins))
           if not due:noop("Game day; no checkpoint due.")
           _,k,mins=min(due)
           for a,b in [("due","true"),("mode","live"),("season",plan["season"]),("week",plan["week"]),("only_team_key",""),("checkpoint",mins),("kickoff_at",k.isoformat())]:emit(a,b)
@@ -149,9 +160,13 @@ jobs:
           from pathlib import Path
           p=json.loads(Path("/tmp/live.json").read_text());e=datetime.fromisoformat(os.environ["EXPECTED"]);m=int(os.environ["CHECKPOINT"]);now=datetime.now().astimezone()
           times=sorted(datetime.fromisoformat(g["kickoff_at"]) for g in p.get("kickoff_groups",[]))
+          # Games may be delayed after the morning plan. Accept the matching
+          # kickoff or the next later group, then require that the selected
+          # checkpoint has actually been reached and kickoff has not occurred.
           live=next((x for x in times if x>=e),None);ok=False
-          if live==e:
-              age=(now-(live-timedelta(minutes=m))).total_seconds();ok=0<=age<300
+          if live:
+              target=live-timedelta(minutes=m)
+              ok=target<=now<live
           if live and live>e:print("Kickoff delayed to",live.isoformat())
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as f:
               f.write("proceed={}\n".format("true" if ok else "false"));f.write("kickoff={}\n".format(live.isoformat() if live else ""))
