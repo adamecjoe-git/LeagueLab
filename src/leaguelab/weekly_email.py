@@ -652,12 +652,6 @@ def _next_challenge(ctx):
     return _section("Next Challenge", body)
 
 
-def _beyond_box_score(ctx, season=False):
-    # Weekly Beyond the Box Score is rendered in the former Weekly Highlights
-    # slot so it sits directly after Matchup Results. Season measures now live
-    # in Power Rankings.
-    return ""
-
 def _upcoming_matchups(ctx, title="Next Week's Matchups"):
     data = ctx.get("upcoming_data") or {}
     matchups = data.get("matchups") or []
@@ -1222,6 +1216,7 @@ def _render(name, ctx):
     mapping = {
         "matchup_results": _matchup_results,
         "weekly_highlights": _weekly_highlights,
+        "league_pulse": _league_pulse,
         "challenge_update": _challenge_update,
         "challenge_results": lambda c: _challenge_update(c, True),
         "challenge_standings": _challenge_standings,
@@ -1323,10 +1318,7 @@ def build_weekly_email_html(
     # Open with the commissioner message immediately below the newsletter header.
     # League Admin remains at the bottom for dues/housekeeping and does not repeat notes.
     content_parts = [_from_commish(ctx)]
-    for name in blocks_for(ntype):
-        content_parts.append(_render(name, ctx))
-        if name == "weekly_highlights":
-            content_parts.append(_league_pulse(ctx))
+    content_parts.extend(_render(name, ctx) for name in blocks_for(ntype))
     content = "".join(content_parts)
 
     # Keep the same 900px canvas that proved reliable in the preseason email.
