@@ -36,12 +36,12 @@ def _required_env(name):
     return value
 
 
-def _email_html_path(season, week):
+def _newsletter_html_path(season, week):
     return (
         OUTPUT_ROOT
         / str(int(season))
         / "newsletter"
-        / "week_{:02d}_email.html".format(int(week))
+        / "week_{:02d}.html".format(int(week))
     )
 
 
@@ -156,11 +156,11 @@ def _smtp_login(sender, app_password):
 
 def run(season, week, mode, league_name):
     sender = _required_env("LEAGUELAB_EMAIL_ADDRESS")
-    html_path = _email_html_path(season, week)
+    html_path = _newsletter_html_path(season, week)
 
     if not html_path.exists():
         raise FileNotFoundError(
-            "Email newsletter HTML was not found:\n  {}\n"
+            "Newsletter HTML was not found:\n  {}\n"
             "Generate the weekly newsletter first.".format(html_path)
         )
 
