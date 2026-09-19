@@ -416,6 +416,47 @@ def build_postseason_newsletter_data(season, week, analytics_result):
         standings, team_rows, player_rows, config, int(week)
     )
 
+    final_standings = [_seed_row(row) for row in standings]
+    if int(week) >= regular_end + 3:
+        # The four Week 17 placement games determine places 1-8.
+        # Toilet Bowl finalists determine 11th/12th; semifinal winners
+        # determine 9th/10th using their Week 16 scores.
+        places = {}
+        for label, first in (
+            ("championship", 1), ("third_place", 3),
+            ("fifth_place", 5), ("seventh_place", 7),
+        ):
+            match = (playoff.get("finals") or {}).get(label) or {}
+            if not match.get("complete"):
+                raise RuntimeError("Cannot determine final standings: {} is incomplete.".format(label))
+            places[str(match["winner_key"])] = first
+            places[str(match["loser_key"])] = first + 1
+
+        semis = (toilet or {}).get("semifinals") or []
+        championship = (toilet or {}).get("championship") or {}
+        if len(semis) != 2 or not championship.get("winner_key"):
+            raise RuntimeError("Cannot determine final standings: Toilet Bowl is incomplete.")
+        places[str(championship["loser_key"])] = 11
+        places[str(championship["winner_key"])] = 12
+        # The two semifinal winners played for the Toilet Bowl; the two
+        # semifinal losers did not. Their Week 16 matchup determines 9/10
+        # only if it exists in the source data; otherwise keep seeds 9/10
+        # as provisional rather than inventing a result.
+        semifinal_losers = [
+            row for row in final_standings
+            if str(row["team_key"]) in {str(m["loser_key"]) for m in semis}
+        ]
+        if len(semifinal_losers) != 2:
+            raise RuntimeError("Cannot identify Toilet Bowl semifinal losers.")
+        semifinal_losers.sort(key=lambda row: row["seed"])
+        places[str(semifinal_losers[0]["team_key"])] = 9
+        places[str(semifinal_losers[1]["team_key"])] = 10
+        if len(places) != 12:
+            raise RuntimeError("Final standings must contain 12 distinct teams.")
+        for row in final_standings:
+            row["place"] = places[str(row["team_key"])]
+        final_standings.sort(key=lambda row: row["place"])
+
     return {
         "playoff": playoff,
         "champion": playoff.get("champion"),
@@ -423,5 +464,5 @@ def build_postseason_newsletter_data(season, week, analytics_result):
         "league_payouts": _build_league_payouts(
             playoff, toilet, config
         ),
-        "final_standings": [_seed_row(row) for row in standings],
+        "final_standings": final_standings,
     }
