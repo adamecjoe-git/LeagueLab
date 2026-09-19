@@ -45,14 +45,11 @@ def newsletter_type_for_week(week, regular_season_end=14, season_end=17, overrid
 
 # The order here is the newsletter specification. Individual blocks may return
 # an empty string when their source data is not available.
-#
-# Note: League Pulse is currently emitted by the email renderer immediately
-# after weekly_highlights. That remaining renderer-side layout decision will be
-# moved here when the six final newsletter templates are defined.
 LAYOUTS = {
     REGULAR_SEASON: (
         "matchup_results",
         "weekly_highlights",
+        "league_pulse",
         "challenge_update",
         "challenge_standings",
         "challenge_leaderboard",
@@ -65,6 +62,7 @@ LAYOUTS = {
     REGULAR_SEASON_FINAL: (
         "matchup_results",
         "weekly_highlights",
+        "league_pulse",
         "challenge_results",
         "challenge_standings_final",
         "challenge_leaderboard",
@@ -80,6 +78,7 @@ LAYOUTS = {
         "playoff_results",
         "toilet_bowl",
         "weekly_highlights",
+        "league_pulse",
         "power_rankings",
         "next_round_matchups",
         "league_admin",
