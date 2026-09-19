@@ -461,6 +461,20 @@ def build_postseason_newsletter_data(season, week, analytics_result):
                 "Cannot determine final standings: both Week 16 Toilet Bowl "
                 "placement matchups must be complete."
             )
+        places = {}
+        for label, first_place in (
+            ("championship", 1),
+            ("third_place", 3),
+            ("fifth_place", 5),
+            ("seventh_place", 7),
+        ):
+            matchup = (playoff.get("finals") or {}).get(label) or {}
+            if not matchup.get("complete") or not matchup.get("winner_key") or not matchup.get("loser_key"):
+                raise RuntimeError(
+                    "Cannot determine final standings: Week 17 {} matchup is incomplete.".format(label)
+                )
+            places[str(matchup["winner_key"])] = first_place
+            places[str(matchup["loser_key"])] = first_place + 1
         places[str(championship["winner_key"])] = 9
         places[str(championship["loser_key"])] = 10
         places[str(third_place["winner_key"])] = 11
