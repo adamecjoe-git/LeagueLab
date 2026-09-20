@@ -28,19 +28,9 @@ NORMALIZED_ROOT = PROJECT_ROOT / "data" / "normalized"
 
 
 def _load_normalizer():
-    """
-    Support the current LeagueLab normalizer filename while leaving room for
-    a later rename to normalize.py.
-    """
-    try:
-        from leaguelab.normalize_with_slots import normalize
-        return normalize
-    except ImportError:
-        try:
-            from leaguelab.normalize import normalize
-            return normalize
-        except ImportError:
-            return None
+    """Load the canonical normalizer; surface import failures directly."""
+    from leaguelab.normalize import normalize
+    return normalize
 
 
 def _normalized_inputs_exist(season):

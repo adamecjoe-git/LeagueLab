@@ -466,6 +466,41 @@ def extract_player_points(value):
     return None
 
 
+# Yahoo stat IDs that represent touchdowns actually scored by the player/team.
+# Passing TDs (stat 5) are intentionally excluded so one NFL touchdown is not
+# counted once for the passer and again for the scorer. 2-point conversions are
+# also excluded.
+TOUCHDOWN_STAT_IDS = {10, 13, 15, 35, 49, 57}
+
+
+def extract_touchdowns(value):
+    """Return non-passing touchdowns from a Yahoo player_stats payload."""
+    total = 0.0
+
+    def walk(obj):
+        nonlocal total
+        if isinstance(obj, dict):
+            if "stat_id" in obj and "value" in obj:
+                try:
+                    stat_id = int(obj.get("stat_id"))
+                except (TypeError, ValueError):
+                    stat_id = None
+                if stat_id in TOUCHDOWN_STAT_IDS:
+                    try:
+                        total += float(obj.get("value") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                return
+            for child in obj.values():
+                walk(child)
+        elif isinstance(obj, list):
+            for child in obj:
+                walk(child)
+
+    walk(value)
+    return int(total) if total.is_integer() else total
+
+
 def assign_lineup_slots(rows):
     """
     Assign an ordered LeagueLab lineup slot within a team/week.
@@ -602,6 +637,8 @@ def parse_week_players(
             )
         )
 
+        touchdowns = extract_touchdowns(player.get("player_stats"))
+
         is_starter = (
             selected_position
             not in (
@@ -642,6 +679,7 @@ def parse_week_players(
                     eligible_positions
                 ),
                 "points": points,
+                "touchdowns": touchdowns,
             }
         )
 
@@ -1062,7 +1100,9 @@ def build_weekly_team_results(
                 "opponent_points"
             ] = opponent_points
 
-            if team_points > opponent_points:
+            if team_points is None or opponent_points is None:
+                normalized_row["result"] = None
+            elif team_points > opponent_points:
                 normalized_row["result"] = "W"
             elif team_points < opponent_points:
                 normalized_row["result"] = "L"
@@ -1302,6 +1342,7 @@ def normalize(season):
             "is_flex",
             "eligible_positions",
             "points",
+            "touchdowns",
         ],
     )
 

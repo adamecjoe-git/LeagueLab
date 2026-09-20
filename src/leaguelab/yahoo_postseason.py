@@ -68,7 +68,7 @@ def load_standings(season, team_rows):
 
 
 def build_bracket(season, team_rows, standings, week, regular_end):
-    from leaguelab.postseason_newsletter import _bracket_matchup, _projection_map
+    from leaguelab.bracket_helpers import _bracket_matchup, _projection_map
     by_seed = {r["seed"]: r for r in standings}
     by_key = {r["team_key"]: r for r in standings if r["seed"] <= 8}
     projections = _projection_map(team_rows)
