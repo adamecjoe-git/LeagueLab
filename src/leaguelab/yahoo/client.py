@@ -66,8 +66,7 @@ class YahooFantasyClient:
 
     def get(self, path, retries=4, retry_delay=3):
         """
-        Fetch a Yahoo Fantasy endpoint from inside the authenticated
-        Yahoo browser session.
+        Fetch a Yahoo Fantasy endpoint using the browser context's cookies.
 
         Automatically retries transient browser/network failures.
         """
@@ -77,22 +76,18 @@ class YahooFantasyClient:
 
         for attempt in range(1, retries + 1):
             try:
-                result = self.page.evaluate(
-                    """async (url) => {
-                        const response = await fetch(url, {
-                            credentials: 'include'
-                        });
-
-                        return {
-                            status: response.status,
-                            body: await response.text()
-                        };
-                    }""",
-                    url,
+                # Yahoo can redirect the page to login/manage_account while
+                # the session cookies still authorize Fantasy API requests.
+                # Context requests share those cookies without depending on
+                # the current page origin or its cross-origin fetch policy.
+                response = self.browser.request.get(
+                    url, timeout=30000, max_redirects=0,
                 )
-
-                status = result["status"]
-                body = result["body"]
+                try:
+                    status = response.status
+                    body = response.text()
+                finally:
+                    response.dispose()
 
                 if status == 200:
                     return json.loads(body)
